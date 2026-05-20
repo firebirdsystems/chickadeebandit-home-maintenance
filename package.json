@@ -1,0 +1,8 @@
+{
+  "name": "chickadee-app-home-maintenance",
+  "version": "1.0.0",
+  "description": "Home Maintenance app for Family Hub",
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "license": "MIT"
+}
