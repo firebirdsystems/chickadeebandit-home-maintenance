@@ -6,9 +6,19 @@
   "entrypoint": "index.html",
   "runtime": "static",
   "category": "family",
-  "tags": ["maintenance", "home", "car", "hvac", "appliances", "warranty", "history"],
+  "tags": [
+    "maintenance",
+    "home",
+    "car",
+    "hvac",
+    "appliances",
+    "warranty",
+    "history"
+  ],
   "data_access": {
-    "reads": ["family.members"],
+    "reads": [
+      "family.members"
+    ],
     "writes": []
   },
   "permissions": {
@@ -16,10 +26,16 @@
     "requires_approval": false
   },
   "storage": "db",
-  "nav": { "label": "Maintenance", "icon": "🔧" },
-  "widget": { "label": "Maintenance", "size": "small" },
+  "nav": {
+    "label": "Maintenance"
+  },
+  "widget": {
+    "label": "Maintenance",
+    "size": "small"
+  },
   "resource_limits": {
     "max_db_bytes": 209715200,
     "max_files_bytes": 524288000
-  }
+  },
+  "icon": "🔧"
 }
