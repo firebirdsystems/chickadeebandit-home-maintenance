@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Home Maintenance Widget</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--hub-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+      font-size: 13px;
+      background: #fff;
+      color: #111827;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px 8px; border-bottom: 1px solid #e5e7eb; flex-shrink: 0;
+    }
+    .header-title { font-weight: 600; font-size: 13px; }
+    .header-count { font-size: 11px; color: #6b7280; }
+
+    .item-list { flex: 1; overflow-y: auto; }
+
+    .item-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-bottom: 1px solid #f3f4f6;
+    }
+    .item-row:last-child { border-bottom: none; }
+
+    .item-icon { font-size: 15px; flex-shrink: 0; }
+    .item-info { flex: 1; min-width: 0; }
+    .item-name {
+      font-size: 12.5px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .item-sub { font-size: 11px; color: #6b7280; margin-top: 1px; }
+
+    .due-badge {
+      font-size: 10px; font-weight: 600; border-radius: 10px;
+      padding: 2px 7px; flex-shrink: 0;
+    }
+    .due-overdue { background: #fee2e2; color: #dc2626; }
+    .due-soon    { background: #fef3c7; color: #d97706; }
+    .due-ok      { background: #d1fae5; color: #059669; }
+
+    .footer {
+      padding: 6px 14px; border-top: 1px solid #e5e7eb;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0; background: #f9fafb;
+    }
+    .footer-hint { font-size: 11px; color: #9ca3af; }
+    .open-link { font-size: 11px; font-weight: 600; color: #111827; text-decoration: none; }
+    .open-link:hover { text-decoration: underline; }
+
+    .empty {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: #9ca3af; font-size: 12px; gap: 6px;
+    }
+  </style>
+</head>
+<body>
+<script type="module">
+const DB     = window.__DB_URL ?? "";
+const APP_ID = "home-maintenance";
+
+function esc(s) {
+  return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+async function dbq(sql, params = []) {
+  if (!DB) return { rows: [] };
+  const res = await fetch(DB, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sql, params }),
+  });
+  return res.json();
+}
+
+async function load() {
+  // Fetch all activities and their most recent log
+  const [{ rows: activities }, { rows: lastLogs }] = await Promise.all([
+    dbq(`SELECT a.id, a.name, a.icon, a.interval_days, i.name AS item_name, i.emoji AS item_emoji
+         FROM activities a
+         JOIN items i ON i.id = a.item_id
+         ORDER BY i.name, a.sort_order, a.created_at`),
+    dbq(`SELECT l.activity_id, MAX(l.done_at) AS last_done
+         FROM logs l
+         GROUP BY l.activity_id`),
+  ]);
+
+  const lastMap = Object.fromEntries(lastLogs.map(r => [r.activity_id, r.last_done]));
+  const now = Date.now();
+
+  // Compute days overdue/remaining for each activity
+  const withDue = activities.map(a => {
+    const lastDone = lastMap[a.id];
+    let daysUntil = null;
+    if (lastDone) {
+      const next = new Date(lastDone).getTime() + a.interval_days * 86400000;
+      daysUntil = (next - now) / 86400000;
+    } else {
+      // Never done — overdue by full interval
+      daysUntil = -a.interval_days;
+    }
+    return { ...a, daysUntil };
+  });
+
+  // Sort: most overdue first, then soonest due
+  withDue.sort((a, b) => a.daysUntil - b.daysUntil);
+
+  // Show overdue + due within 30 days (limit 12)
+  const urgent = withDue.filter(a => a.daysUntil <= 30).slice(0, 12);
+
+  function dueLabel(days) {
+    if (days <= 0) {
+      const d = Math.round(-days);
+      return d === 0 ? "Due today" : `${d}d overdue`;
+    }
+    if (days < 1) return "Due today";
+    return `Due in ${Math.round(days)}d`;
+  }
+
+  function dueCls(days) {
+    if (days <= 0) return "due-overdue";
+    if (days <= 7) return "due-soon";
+    return "due-ok";
+  }
+
+  const overdueCount = withDue.filter(a => a.daysUntil <= 0).length;
+
+  const header = `
+    <div class="header">
+      <span class="header-title">Home Maintenance</span>
+      <span class="header-count">${overdueCount > 0 ? `${overdueCount} overdue` : `${withDue.length} tracked`}</span>
+    </div>`;
+
+  let body;
+  if (activities.length === 0) {
+    body = `<div class="empty">
+      <span>No maintenance items</span>
+      <a href="/open/${APP_ID}" onclick="window.__HUB_OPEN && (event.preventDefault(), window.__HUB_OPEN('${APP_ID}'))" style="color:#111827;font-weight:600;font-size:11px">Add items →</a>
+    </div>`;
+  } else if (urgent.length === 0) {
+    body = `<div class="empty"><span style="color:#059669;font-size:20px">✓</span><span>All caught up!</span></div>`;
+  } else {
+    body = `<div class="item-list">
+      ${urgent.map(a => `<div class="item-row">
+        <div class="item-icon">${a.icon ?? "🔧"}</div>
+        <div class="item-info">
+          <div class="item-name">${esc(a.name)}</div>
+          <div class="item-sub">${esc(a.item_name)}</div>
+        </div>
+        <div class="due-badge ${dueCls(a.daysUntil)}">${dueLabel(a.daysUntil)}</div>
+      </div>`).join("")}
+    </div>`;
+  }
+
+  const footer = `
+    <div class="footer">
+      <span class="footer-hint">${withDue.length} task${withDue.length !== 1 ? "s" : ""} total</span>
+      <a class="open-link" href="/open/${APP_ID}" onclick="window.__HUB_OPEN && (event.preventDefault(), window.__HUB_OPEN('${APP_ID}'))">View all →</a>
+    </div>`;
+
+  document.body.innerHTML = header + body + footer;
+}
+
+load().catch(() => {
+  document.body.innerHTML = `<div class="empty"><a href="/open/${APP_ID}" style="color:#111827;font-weight:600">Open Home Maintenance →</a></div>`;
+});
+</script>
+</body>
+</html>
