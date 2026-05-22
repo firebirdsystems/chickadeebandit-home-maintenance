@@ -214,11 +214,7 @@ async function db(sql, params = []) {
 }
 
 async function initDb() {
-  await db(`CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '🔧', location TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`);
-  await db(`CREATE TABLE IF NOT EXISTS activities (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '🔧', interval_days REAL NOT NULL DEFAULT 90, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`);
-  await db(`CREATE TABLE IF NOT EXISTS logs (id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, item_id TEXT NOT NULL, done_by TEXT NOT NULL, done_at TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`);
-  await db(`CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT NOT NULL, file_id TEXT NOT NULL, file_url TEXT NOT NULL, file_size INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT NOT NULL, created_at TEXT NOT NULL)`);
-}
+  // Schema is managed by hub migrations (migrations/001_init.sql)}
 
 async function loadMembers() {
   if (!CONTEXT) { members = [{ id: "demo-1", name: "Alex", role: "adult" }, { id: "demo-2", name: "Jordan", role: "adult" }]; return; }
