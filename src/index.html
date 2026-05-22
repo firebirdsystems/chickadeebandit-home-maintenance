@@ -176,6 +176,10 @@
     .settings-row:last-child { border-bottom: none; }
     .settings-row .info { flex: 1; font-size: 0.88rem; }
     .settings-row .sched-meta { font-size: 0.78rem; color: var(--muted); }
+    .act-list { margin: 4px 0 6px 10px; padding-left: 10px; border-left: 2px solid var(--border); }
+    .act-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+    .act-row:last-child { border-bottom: none; }
+    .act-row .info { flex: 1; font-size: 0.83rem; }
 
     .empty { text-align: center; padding: 36px 16px; color: var(--muted); font-size: 0.9rem; }
     .empty-sm { font-size: 0.85rem; color: var(--muted); padding: 8px 0; }
@@ -198,14 +202,14 @@ const DB      = window.__DB_URL      ?? "";
 const FILES   = window.__FILES_URL   ?? "";
 const ME      = window.__CURRENT_MEMBER ?? null;
 
-let members     = [];
-let items       = [];     // things being maintained (car, HVAC, etc.)
-let activities  = [];     // maintenance tasks for selected item
-let lastLogs    = {};     // activityId → most recent log
-let documents   = [];     // documents for selected item
-let selectedId  = null;
-let settingsTab = "activities";
-let refreshTimer = null;
+let members      = [];
+let items        = [];    // things being maintained (car, HVAC, etc.)
+let activities   = [];    // all tasks across all items
+let lastLogs     = {};    // activityId → most recent log
+let documents    = [];    // documents for selected item
+let selectedId   = null;
+let actFormItemId = null; // item context for the open activity form
+let refreshTimer  = null;
 
 async function db(sql, params = []) {
   if (!DB) return { rows: [] };
@@ -223,14 +227,14 @@ async function loadMembers() {
 }
 async function loadItems()  { const { rows } = await db(`SELECT * FROM items ORDER BY created_at`); items = rows ?? []; }
 async function loadActivities() {
-  if (!selectedId) { activities = []; return; }
-  const { rows } = await db(`SELECT * FROM activities WHERE item_id = ? ORDER BY sort_order, created_at`, [selectedId]);
+  const { rows } = await db(`SELECT * FROM activities ORDER BY item_id, sort_order, created_at`);
   activities = rows ?? [];
 }
 async function loadLastLogs() {
   lastLogs = {};
-  if (!activities.length) return;
-  const ids = activities.map(a => a.id);
+  const curActs = activities.filter(a => a.item_id === selectedId);
+  if (!curActs.length) return;
+  const ids = curActs.map(a => a.id);
   const ph  = ids.map(() => "?").join(",");
   const { rows } = await db(`SELECT l.* FROM logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM logs WHERE activity_id IN (${ph}) GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx`, ids);
   for (const r of rows ?? []) lastLogs[r.activity_id] = r;
@@ -441,10 +445,11 @@ async function saveItem(fields, id = null) {
       defaults.push({ name: "Service", icon: "🔧", days: 365 });
     }
     for (let i = 0; i < defaults.length; i++) {
+      const aId = crypto.randomUUID();
       await db(`INSERT INTO activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [crypto.randomUUID(), newId, defaults[i].name, defaults[i].icon, defaults[i].days, i, now]);
+        [aId, newId, defaults[i].name, defaults[i].icon, defaults[i].days, i, now]);
+      activities = [...activities, { id: aId, item_id: newId, name: defaults[i].name, icon: defaults[i].icon, interval_days: defaults[i].days, sort_order: i, created_at: now }];
     }
-    if (selectedId === newId) await loadActivities();
   }
 }
 
@@ -460,20 +465,23 @@ async function deleteItem(id) {
   }
   await db(`DELETE FROM documents WHERE item_id = ?`, [id]);
   items = items.filter(i => i.id !== id);
-  if (selectedId === id) { selectedId = items[0]?.id ?? null; activities = []; lastLogs = {}; documents = []; if (selectedId) { await loadActivities(); await loadLastLogs(); await loadDocuments(); } }
+  activities = activities.filter(a => a.item_id !== id);
+  if (selectedId === id) { selectedId = items[0]?.id ?? null; lastLogs = {}; documents = []; if (selectedId) { await loadLastLogs(); await loadDocuments(); } }
   return true;
 }
 
 async function saveActivity(fields, id = null) {
   const now = new Date().toISOString();
+  const itemId = actFormItemId ?? selectedId;
   if (id) {
     await db(`UPDATE activities SET name = ?, icon = ?, interval_days = ? WHERE id = ?`, [fields.name, fields.icon, fields.interval_days, id]);
     activities = activities.map(a => a.id === id ? { ...a, ...fields } : a);
   } else {
     const newId = crypto.randomUUID();
+    const sortOrder = activities.filter(a => a.item_id === itemId).length;
     await db(`INSERT INTO activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [newId, selectedId, fields.name, fields.icon, fields.interval_days, activities.length, now]);
-    activities = [...activities, { id: newId, item_id: selectedId, ...fields }];
+      [newId, itemId, fields.name, fields.icon, fields.interval_days, sortOrder, now]);
+    activities = [...activities, { id: newId, item_id: itemId, ...fields }];
   }
 }
 
@@ -553,6 +561,7 @@ function renderDocsSection() {
 function renderMain() {
   const item      = items.find(i => i.id === selectedId);
   const meIsAdmin = isAdult(ME);
+  const curActs   = activities.filter(a => a.item_id === selectedId);
   const tabsHtml  = items.length > 1
     ? `<div class="item-tabs">${items.map(i => `<button class="item-tab ${i.id === selectedId ? "active" : ""}" onclick="selectItem('${i.id}')">${i.emoji} ${esc(i.name)}</button>`).join("")}</div>` : "";
 
@@ -560,9 +569,9 @@ function renderMain() {
   if (items.length === 0) {
     body = meIsAdmin ? `<div class="empty">No items yet. Tap ⚙️ to add your first item (car, HVAC, appliance…).</div>` : `<div class="empty">No maintenance items configured yet.</div>`;
   } else {
-    const cardGrid = activities.length === 0
+    const cardGrid = curActs.length === 0
       ? (meIsAdmin ? `<div class="empty" style="padding:20px">No tasks for ${esc(item?.name ?? "this item")}. Tap ⚙️ to add some.</div>` : `<div class="empty" style="padding:20px">No tasks configured yet.</div>`)
-      : `<div class="card-grid">${activities.map(renderCard).join("")}</div>`;
+      : `<div class="card-grid">${curActs.map(renderCard).join("")}</div>`;
     body = `${cardGrid}${renderDocsSection()}`;
   }
 
@@ -575,26 +584,43 @@ function renderMain() {
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────
+const INTERVAL_UNIT = v => v >= 365 ? `${(v/365).toFixed(1)}yr` : v >= 30 ? `${Math.round(v/30)}mo` : v >= 7 ? `${Math.round(v/7)}w` : `${v}d`;
+
 function renderSettingsModal() {
-  const tab  = settingsTab;
-  const item = items.find(i => i.id === selectedId);
-  const INTERVAL_UNIT = v => v >= 365 ? `${(v/365).toFixed(1)}yr` : v >= 30 ? `${Math.round(v/30)}mo` : v >= 7 ? `${Math.round(v/7)}w` : `${v}d`;
-  const itemsHtml = `
-    ${items.map(i => `<div class="settings-row"><div class="info"><strong>${i.emoji} ${esc(i.name)}</strong>${i.location ? ` <span class="muted">· ${esc(i.location)}</span>` : ""}</div><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="openItemForm('${i.id}')">Edit</button><button class="btn btn-danger btn-sm" onclick="doDelItem('${i.id}')">Delete</button></div></div>`).join("") || `<div class="empty-sm">No items yet.</div>`}
-    <div style="margin-top:12px"><button class="btn btn-primary btn-sm" onclick="openItemForm()">+ Add Item</button></div>`;
-  const actsHtml = !selectedId ? `<div class="empty-sm">Select an item first.</div>` : `
-    ${activities.map(a => `<div class="settings-row"><div class="info"><strong>${a.icon} ${esc(a.name)}</strong><div class="sched-meta">Every ${INTERVAL_UNIT(a.interval_days)}</div></div><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="openActForm('${a.id}')">Edit</button><button class="btn btn-danger btn-sm" onclick="doDelAct('${a.id}')">Delete</button></div></div>`).join("") || `<div class="empty-sm">No tasks for ${esc(item?.name ?? "this item")} yet.</div>`}
-    <div style="margin-top:12px"><button class="btn btn-primary btn-sm" onclick="openActForm()">+ Add Task</button></div>`;
+  const itemsHtml = items.map(i => {
+    const iActs = activities.filter(a => a.item_id === i.id);
+    const actsHtml = iActs.map(a => `
+      <div class="act-row">
+        <div class="info"><strong>${a.icon} ${esc(a.name)}</strong> <span class="sched-meta">Every ${INTERVAL_UNIT(a.interval_days)}</span></div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <button class="btn btn-ghost btn-sm" onclick="openActForm('${a.id}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="doDelAct('${a.id}')">Delete</button>
+        </div>
+      </div>`).join("");
+    return `
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div class="info"><strong>${i.emoji} ${esc(i.name)}</strong>${i.location ? ` <span class="muted">· ${esc(i.location)}</span>` : ""}</div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="btn btn-ghost btn-sm" onclick="openItemForm('${i.id}')">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="doDelItem('${i.id}')">Delete</button>
+          </div>
+        </div>
+        <div class="act-list">
+          ${actsHtml || `<div class="empty-sm">No tasks yet.</div>`}
+          <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="openActForm(null,'${i.id}')">+ Add Task</button>
+        </div>
+      </div>`;
+  }).join("") || `<div class="empty-sm">No items yet.</div>`;
   openModal(`
-    <div class="settings-header"><h3>⚙️ Settings</h3><button class="btn btn-ghost btn-sm" onclick="closeModal()">Done</button></div>
-    <div class="tabs"><button class="tab ${tab === "items" ? "active" : ""}" onclick="switchTab('items')">Items</button><button class="tab ${tab === "activities" ? "active" : ""}" onclick="switchTab('activities')">Tasks${item ? ` — ${item.emoji} ${esc(item.name)}` : ""}</button></div>
-    <div>${tab === "items" ? itemsHtml : actsHtml}</div>`);
+    <div class="settings-header"><h3>⚙️ Items &amp; Tasks</h3><button class="btn btn-ghost btn-sm" onclick="closeModal()">Done</button></div>
+    ${itemsHtml}
+    <div style="margin-top:14px"><button class="btn btn-primary btn-sm" onclick="openItemForm()">+ Add Item</button></div>`);
 }
 
-window.switchTab   = t => { settingsTab = t; renderSettingsModal(); };
-window.doDelItem   = async id => { if (await deleteItem(id)) { renderSettingsModal(); renderMain(); } };
-window.doDelAct    = async id => { if (await deleteActivity(id)) { renderSettingsModal(); renderMain(); } };
-window.openSettings = ()  => { settingsTab = "activities"; renderSettingsModal(); };
+window.doDelItem    = async id => { if (await deleteItem(id)) { renderSettingsModal(); renderMain(); } };
+window.doDelAct     = async id => { if (await deleteActivity(id)) { renderSettingsModal(); renderMain(); } };
+window.openSettings = () => renderSettingsModal();
 
 // ─── Item form ────────────────────────────────────────────────────────────
 const ITEM_EMOJIS = ["🚗","🚙","🚕","🚐","🛻","🏠","🏡","❄️","🌡️","💧","⚡","🔥","🌀","🧰","🛠️","🔧"];
@@ -623,7 +649,8 @@ window.submitItem = async id => {
 const ACT_ICONS = ["🔧","🛢️","🔄","🌀","🔍","💧","🪛","🔩","🧹","🪣","⚙️","🔌","💡","🪠","🔑","🛞"];
 const INTERVAL_PRESETS = [{ label: "Monthly (30d)", days: 30 }, { label: "3 Months (90d)", days: 90 }, { label: "6 Months (180d)", days: 180 }, { label: "Annually (365d)", days: 365 }, { label: "Custom", days: null }];
 
-function openActForm(id = null) {
+function openActForm(id = null, itemId = null) {
+  actFormItemId = id ? (activities.find(x => x.id === id)?.item_id ?? selectedId) : (itemId ?? selectedId);
   const a   = id ? activities.find(x => x.id === id) : null;
   const sel = a?.icon ?? "🔧";
   const ig  = ACT_ICONS.map(e => `<button type="button" class="emoji-btn ${sel === e ? "selected" : ""}" onclick="pickActIcon(this,'${e}')">${e}</button>`).join("");
@@ -670,17 +697,15 @@ window.openActForm    = openActForm;
 window.closeModal     = closeModal;
 window.markDone       = markDone;
 window.openHistory    = openHistoryModal;
-window.selectItem     = async id => { selectedId = id; await loadActivities(); await loadLastLogs(); await loadDocuments(); renderMain(); };
+window.selectItem     = async id => { selectedId = id; await loadLastLogs(); await loadDocuments(); renderMain(); };
 
 (async () => {
   await loadMembers();
   if (DB) {
     await initDb();
-    await loadItems();
+    await Promise.all([loadItems(), loadActivities()]);
     if (items.length > 0) selectedId = items[0].id;
-    await loadActivities();
-    await loadLastLogs();
-    await loadDocuments();
+    await Promise.all([loadLastLogs(), loadDocuments()]);
   }
   renderMain();
   refreshTimer = setInterval(() => { if (!modalEl) renderMain(); }, 60_000);
