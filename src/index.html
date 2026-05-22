@@ -191,7 +191,7 @@
   <div id="root"><div class="loading">Loading…</div></div>
 </div>
 <script type="module">
-import { memberColor, initial, esc, isAdult } from "/hub-sdk.js";
+import { memberColor, initial, esc, isAdult, hubConfirm } from "/hub-sdk.js";
 
 const CONTEXT = window.__CONTEXT_URL ?? "";
 const DB      = window.__DB_URL      ?? "";
@@ -356,7 +356,7 @@ async function openHistoryModal(activityId) {
 }
 
 window.deleteLog = async (logId, activityId) => {
-  if (!confirm("Delete this log entry?")) return;
+  if (!await hubConfirm({ message: "Delete this log entry?", confirmLabel: "Delete", destructive: true })) return;
   await db(`DELETE FROM logs WHERE id = ?`, [logId]);
   // Refresh last log cache for this activity
   const { rows } = await db(`SELECT * FROM logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [activityId]);
@@ -407,7 +407,7 @@ async function uploadDocument(file) {
 }
 
 async function deleteDocument(docId, fileId) {
-  if (!confirm("Delete this document?")) return;
+  if (!await hubConfirm({ message: "Delete this document?", confirmLabel: "Delete", destructive: true })) return;
   await db(`DELETE FROM documents WHERE id = ?`, [docId]);
   if (FILES && fileId) {
     await fetch(`${FILES}?id=${encodeURIComponent(fileId)}`, { method: "DELETE" }).catch(() => {});
@@ -449,7 +449,7 @@ async function saveItem(fields, id = null) {
 }
 
 async function deleteItem(id) {
-  if (!confirm("Delete this item and all its maintenance data?")) return false;
+  if (!await hubConfirm({ message: "Delete this item?", description: "All maintenance records will be permanently removed.", confirmLabel: "Delete item", destructive: true })) return false;
   await db(`DELETE FROM items WHERE id = ?`, [id]);
   await db(`DELETE FROM activities WHERE item_id = ?`, [id]);
   await db(`DELETE FROM logs WHERE item_id = ?`, [id]);
@@ -478,7 +478,7 @@ async function saveActivity(fields, id = null) {
 }
 
 async function deleteActivity(id) {
-  if (!confirm("Delete this activity and its history?")) return false;
+  if (!await hubConfirm({ message: "Delete this activity?", description: "The activity and its log history will be permanently removed.", confirmLabel: "Delete", destructive: true })) return false;
   await db(`DELETE FROM activities WHERE id = ?`, [id]);
   await db(`DELETE FROM logs WHERE activity_id = ?`, [id]);
   activities = activities.filter(a => a.id !== id);
