@@ -374,7 +374,7 @@ async function deleteDocument(docId, fileId) {
   if (!await hubConfirm({ message: "Delete this document?", confirmLabel: "Delete", destructive: true })) return;
   await db(`DELETE FROM documents WHERE id = ?`, [docId]);
   if (FILES && fileId) {
-    await fetch(`${FILES}?id=${encodeURIComponent(fileId)}`, { method: "DELETE" }).catch(() => {});
+    await fetch(`${FILES}/${encodeURIComponent(fileId)}`, { method: "DELETE" }).catch(() => {});
   }
   documents = documents.filter(d => d.id !== docId);
   renderMain();
@@ -421,7 +421,7 @@ async function deleteItem(id) {
   // Also remove documents from files API
   const docsToDelete = documents.filter(d => d.item_id === id);
   for (const d of docsToDelete) {
-    if (FILES && d.file_id) await fetch(`${FILES}?id=${encodeURIComponent(d.file_id)}`, { method: "DELETE" }).catch(() => {});
+    if (FILES && d.file_id) await fetch(`${FILES}/${encodeURIComponent(d.file_id)}`, { method: "DELETE" }).catch(() => {});
   }
   await db(`DELETE FROM documents WHERE item_id = ?`, [id]);
   items = items.filter(i => i.id !== id);
