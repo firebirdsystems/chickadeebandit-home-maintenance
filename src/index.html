@@ -195,7 +195,7 @@
   <div id="root"><div class="loading">Loading…</div></div>
 </div>
 <script type="module">
-import { memberColor, initial, esc, isAdult, hubConfirm } from "/hub-sdk.js";
+import { memberColor, initial, esc, isAdult, hubConfirm, createFilesHelper } from "/hub-sdk.js";
 import {
   formatDays, intervalUnit,
   fmtDate, fmtDateTime,
@@ -205,8 +205,8 @@ import {
 
 const CONTEXT = window.__CONTEXT_URL ?? "";
 const DB      = window.__DB_URL      ?? "";
-const FILES   = window.__FILES_URL   ?? "";
 const ME      = window.__CURRENT_MEMBER ?? null;
+const files   = createFilesHelper(window.__FILES_URL ?? "");
 
 let members      = [];
 let items        = [];    // things being maintained (car, HVAC, etc.)
@@ -345,19 +345,14 @@ window.deleteLog = async (logId, activityId) => {
 // ─── Documents ────────────────────────────────────────────────────────────
 
 async function uploadDocument(file) {
-  if (!FILES || !ME) return;
+  if (!window.__FILES_URL || !ME) return;
   const area = document.getElementById("upload-area");
   if (area) { area.textContent = "⏳ Uploading…"; area.classList.add("uploading"); }
 
   try {
-    const fd = new FormData();
-    fd.append("file", file);
-    const res  = await fetch(FILES, { method: "POST", body: fd });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`);
-    const fileId  = data.id ?? data.file_id;
-    const fileUrl = data.url ?? data.file_url ?? "";
-    if (!fileId) throw new Error("Upload response missing file ID");
+    const data    = await files.upload(file);
+    const fileId  = data.id;
+    const fileUrl = data.url ?? "";
     const now = new Date().toISOString();
     const docId = crypto.randomUUID();
     await db(`INSERT INTO documents (id, item_id, name, file_id, file_url, file_size, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -373,9 +368,7 @@ async function uploadDocument(file) {
 async function deleteDocument(docId, fileId) {
   if (!await hubConfirm({ message: "Delete this document?", confirmLabel: "Delete", destructive: true })) return;
   await db(`DELETE FROM documents WHERE id = ?`, [docId]);
-  if (FILES && fileId) {
-    await fetch(`${FILES}/${encodeURIComponent(fileId)}`, { method: "DELETE" }).catch(() => {});
-  }
+  await files.delete(fileId).catch(() => {});
   documents = documents.filter(d => d.id !== docId);
   renderMain();
 }
@@ -421,7 +414,7 @@ async function deleteItem(id) {
   // Also remove documents from files API
   const docsToDelete = documents.filter(d => d.item_id === id);
   for (const d of docsToDelete) {
-    if (FILES && d.file_id) await fetch(`${FILES}/${encodeURIComponent(d.file_id)}`, { method: "DELETE" }).catch(() => {});
+    if (d.file_id) await files.delete(d.file_id).catch(() => {});
   }
   await db(`DELETE FROM documents WHERE item_id = ?`, [id]);
   items = items.filter(i => i.id !== id);
@@ -510,7 +503,7 @@ function renderDocsSection() {
       ${meIsAdmin ? `<div class="doc-actions"><button class="btn btn-ghost btn-sm" onclick="event.preventDefault();doDelDoc('${d.id}','${d.file_id}')">✕</button></div>` : ""}
     </a>`).join("");
 
-  const uploadHtml = meIsAdmin && FILES ? `
+  const uploadHtml = meIsAdmin && window.__FILES_URL ? `
     <div class="upload-area" id="upload-area" onclick="triggerUpload()" ondragover="event.preventDefault();this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleDrop(event)">
       📎 Click or drag &amp; drop to upload a document (PDF, image, or any file)
     </div>
