@@ -22,7 +22,7 @@
     "writes": []
   },
   "permissions": {
-    "default_audience": "everyone",
+    "default_audience": "adults",
     "requires_approval": false
   },
   "storage": "db",
