@@ -354,8 +354,10 @@ async function uploadDocument(file) {
     fd.append("file", file);
     const res  = await fetch(FILES, { method: "POST", body: fd });
     const data = await res.json();
-    const fileId  = data.id ?? data.file_id ?? crypto.randomUUID();
+    if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`);
+    const fileId  = data.id ?? data.file_id;
     const fileUrl = data.url ?? data.file_url ?? "";
+    if (!fileId) throw new Error("Upload response missing file ID");
     const now = new Date().toISOString();
     const docId = crypto.randomUUID();
     await db(`INSERT INTO documents (id, item_id, name, file_id, file_url, file_size, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
