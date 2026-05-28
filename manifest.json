@@ -1,11 +1,11 @@
 {
   "id": "home-maintenance",
-  "name": "Home Maintenance",
+  "name": "Maintenance",
   "version": "1.0.0",
   "description": "Track recurring maintenance tasks — car oil changes, HVAC filters, appliance servicing — with full history and document storage for warranty PDFs and manuals.",
   "entrypoint": "index.html",
   "runtime": "static",
-  "category": "family",
+  "category": "general",
   "tags": [
     "maintenance",
     "home",
