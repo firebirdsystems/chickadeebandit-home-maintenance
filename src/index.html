@@ -205,6 +205,7 @@ import {
 
 const CONTEXT = window.__CONTEXT_URL ?? "";
 const DB      = window.__DB_URL      ?? "";
+const DOCS    = window.__DOCS_URL    ?? "";
 const ME      = window.__CURRENT_MEMBER ?? null;
 const files   = createFilesHelper(window.__FILES_URL ?? "");
 
@@ -246,9 +247,9 @@ async function loadLastLogs() {
   for (const r of rows ?? []) lastLogs[r.activity_id] = r;
 }
 async function loadDocuments() {
-  if (!selectedId) { documents = []; return; }
-  const { rows } = await db(`SELECT * FROM documents WHERE item_id = ? ORDER BY created_at DESC`, [selectedId]);
-  documents = rows ?? [];
+  if (!selectedId || !DOCS) { documents = []; return; }
+  const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(selectedId)}`);
+  documents = res.ok ? await res.json() : [];
 }
 
 // ─── Status ───────────────────────────────────────────────────────────────
@@ -345,19 +346,22 @@ window.deleteLog = async (logId, activityId) => {
 // ─── Documents ────────────────────────────────────────────────────────────
 
 async function uploadDocument(file) {
-  if (!window.__FILES_URL || !ME) return;
+  if (!DOCS || !ME) return;
   const area = document.getElementById("upload-area");
   if (area) { area.textContent = "⏳ Uploading…"; area.classList.add("uploading"); }
 
   try {
-    const data    = await files.upload(file);
-    const fileId  = data.id;
-    const fileUrl = data.url ?? "";
-    const now = new Date().toISOString();
-    const docId = crypto.randomUUID();
-    await db(`INSERT INTO documents (id, item_id, name, file_id, file_url, file_size, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [docId, selectedId, file.name, fileId, fileUrl, file.size, ME.id, now]);
-    documents = [{ id: docId, item_id: selectedId, name: file.name, file_id: fileId, file_url: fileUrl, file_size: file.size, uploaded_by: ME.id, created_at: now }, ...documents];
+    const data = await files.upload(file);
+    const res  = await fetch(DOCS, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: file.name, category: "home",
+        fileKey: data.id, mimeType: file.type, sizeBytes: file.size,
+        sourceId: selectedId,
+      }),
+    });
+    const { id: docId } = await res.json();
+    documents = [{ id: docId, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: selectedId, createdAt: new Date().toISOString() }, ...documents];
     renderMain();
   } catch (err) {
     alert("Upload failed: " + err.message);
@@ -365,10 +369,10 @@ async function uploadDocument(file) {
   }
 }
 
-async function deleteDocument(docId, fileId) {
+async function deleteDocument(docId, fileKey) {
   if (!await hubConfirm({ message: "Delete this document?", confirmLabel: "Delete", destructive: true })) return;
-  await db(`DELETE FROM documents WHERE id = ?`, [docId]);
-  await files.delete(fileId).catch(() => {});
+  await fetch(`${DOCS}/${docId}`, { method: "DELETE" });
+  if (fileKey) await files.delete(fileKey).catch(() => {});
   documents = documents.filter(d => d.id !== docId);
   renderMain();
 }
@@ -411,12 +415,16 @@ async function deleteItem(id) {
   await db(`DELETE FROM items WHERE id = ?`, [id]);
   await db(`DELETE FROM activities WHERE item_id = ?`, [id]);
   await db(`DELETE FROM logs WHERE item_id = ?`, [id]);
-  // Also remove documents from files API
-  const docsToDelete = documents.filter(d => d.item_id === id);
-  for (const d of docsToDelete) {
-    if (d.file_id) await files.delete(d.file_id).catch(() => {});
+  // Remove hub documents linked to this item (hub cascade deletes on app uninstall,
+  // but we clean up eagerly here too)
+  if (DOCS) {
+    const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(id)}`);
+    const docsToDelete = res.ok ? await res.json() : [];
+    for (const d of docsToDelete) {
+      await fetch(`${DOCS}/${d.id}`, { method: "DELETE" });
+      if (d.fileKey) await files.delete(d.fileKey).catch(() => {});
+    }
   }
-  await db(`DELETE FROM documents WHERE item_id = ?`, [id]);
   items = items.filter(i => i.id !== id);
   activities = activities.filter(a => a.item_id !== id);
   if (selectedId === id) { selectedId = items[0]?.id ?? null; lastLogs = {}; documents = []; if (selectedId) { await loadLastLogs(); await loadDocuments(); } }
@@ -494,13 +502,13 @@ function renderCard(activity) {
 function renderDocsSection() {
   const meIsAdmin = isAdult(ME);
   const docsHtml = documents.map(d => `
-    <a class="doc-row" href="${esc(d.file_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
-      <span class="doc-icon">${docIcon(d.name)}</span>
+    <a class="doc-row" href="${esc(files.url(d.fileKey))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
+      <span class="doc-icon">${docIcon(d.title)}</span>
       <div class="doc-info">
-        <div class="doc-name">${esc(d.name)}</div>
-        <div class="doc-meta">${formatBytes(d.file_size)} · ${fmtDate(d.created_at)}</div>
+        <div class="doc-name">${esc(d.title)}</div>
+        <div class="doc-meta">${formatBytes(d.sizeBytes ?? 0)} · ${fmtDate(d.createdAt)}</div>
       </div>
-      ${meIsAdmin ? `<div class="doc-actions"><button class="btn btn-ghost btn-sm" onclick="event.preventDefault();doDelDoc('${d.id}','${d.file_id}')">✕</button></div>` : ""}
+      ${meIsAdmin ? `<div class="doc-actions"><button class="btn btn-ghost btn-sm" onclick="event.preventDefault();doDelDoc('${d.id}','${esc(d.fileKey ?? '')}')">✕</button></div>` : ""}
     </a>`).join("");
 
   const uploadHtml = meIsAdmin && window.__FILES_URL ? `
