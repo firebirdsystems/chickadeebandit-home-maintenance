@@ -673,6 +673,13 @@ window.markDone       = markDone;
 window.openHistory    = openHistoryModal;
 window.selectItem     = async id => { selectedId = id; await loadLastLogs(); await loadDocuments(); renderMain(); };
 
+function handleDeepLink() {
+  const itemId = new URLSearchParams(window.location.search).get("itemId");
+  if (!itemId) return;
+  const item = items.find(i => i.id === itemId);
+  if (item) window.selectItem(itemId);
+}
+
 (async () => {
   await loadMembers();
   if (DB) {
@@ -682,6 +689,7 @@ window.selectItem     = async id => { selectedId = id; await loadLastLogs(); awa
     await Promise.all([loadLastLogs(), loadDocuments()]);
   }
   renderMain();
+  handleDeepLink();
   refreshTimer = setInterval(() => { if (!modalEl) renderMain(); }, 60_000);
 })();
 </script>
