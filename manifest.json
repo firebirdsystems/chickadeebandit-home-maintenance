@@ -19,7 +19,9 @@
     "reads": [
       "family.members"
     ],
-    "writes": []
+    "writes": [
+      "family.documents"
+    ]
   },
   "permissions": {
     "default_audience": "adults",
