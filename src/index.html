@@ -217,6 +217,7 @@ let documents    = [];    // documents for selected item
 let selectedId   = null;
 let actFormItemId = null; // item context for the open activity form
 let refreshTimer  = null;
+let docSearch     = "";
 
 async function db(sql, params = []) {
   if (!DB) return { rows: [] };
@@ -501,15 +502,23 @@ function renderCard(activity) {
 
 function renderDocsSection() {
   const meIsAdmin = isAdult(ME);
-  const docsHtml = documents.map(d => `
+  const filtered = docSearch ? documents.filter(d => d.title.toLowerCase().includes(docSearch.toLowerCase())) : documents;
+  const docsHtml = filtered.map(d => `
     <a class="doc-row" href="${esc(files.url(d.fileKey))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
       <span class="doc-icon">${docIcon(d.title)}</span>
       <div class="doc-info">
         <div class="doc-name">${esc(d.title)}</div>
         <div class="doc-meta">${formatBytes(d.sizeBytes ?? 0)} · ${fmtDate(d.createdAt)}</div>
       </div>
-      ${meIsAdmin ? `<div class="doc-actions"><button class="btn btn-ghost btn-sm" onclick="event.preventDefault();doDelDoc('${d.id}','${esc(d.fileKey ?? '')}')">✕</button></div>` : ""}
+      ${meIsAdmin ? `<div class="doc-actions">
+        <button class="btn btn-ghost btn-sm" onclick="event.preventDefault();renameDoc('${d.id}')" title="Rename">✏</button>
+        <button class="btn btn-ghost btn-sm" onclick="event.preventDefault();doDelDoc('${d.id}','${esc(d.fileKey ?? '')}')">✕</button>
+      </div>` : ""}
     </a>`).join("");
+
+  const searchHtml = documents.length > 2 ? `
+    <input type="search" placeholder="Search files…" value="${esc(docSearch)}" oninput="setDocSearch(this.value)"
+      style="width:100%;box-sizing:border-box;border:1.5px solid var(--border-mid);border-radius:8px;padding:6px 10px;font-size:0.82rem;font-family:inherit;background:var(--card);color:var(--text);margin-bottom:8px" />` : "";
 
   const uploadHtml = meIsAdmin && window.__FILES_URL ? `
     <div class="upload-area" id="upload-area" onclick="triggerUpload()" ondragover="event.preventDefault();this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleDrop(event)">
@@ -517,10 +526,17 @@ function renderDocsSection() {
     </div>
     <input type="file" id="file-input" style="display:none" onchange="handleFileSelect(this)" />` : "";
 
+  const emptyMsg = documents.length === 0
+    ? `<div class="empty-sm" style="margin-bottom:10px">No documents yet${meIsAdmin ? " — upload warranty PDFs, manuals, receipts" : ""}.</div>`
+    : filtered.length === 0
+    ? `<div class="empty-sm" style="margin-bottom:10px">No documents match your search.</div>`
+    : docsHtml;
+
   return `
     <div class="docs-section">
       <div class="section-title">Documents</div>
-      ${documents.length === 0 ? `<div class="empty-sm" style="margin-bottom:10px">No documents yet${meIsAdmin ? " — upload warranty PDFs, manuals, receipts" : ""}.</div>` : docsHtml}
+      ${searchHtml}
+      ${emptyMsg}
       ${uploadHtml}
     </div>`;
 }
@@ -664,6 +680,48 @@ window.handleDrop = e => {
   if (f) uploadDocument(f);
 };
 window.doDelDoc = deleteDocument;
+
+window.setDocSearch = function(v) { docSearch = v; renderMain(); };
+
+window.renameDoc = async function(id) {
+  const doc = documents.find(d => d.id === id);
+  if (!doc || !DOCS) return;
+  const existing = document.getElementById("rename-doc-overlay");
+  if (existing) existing.remove();
+  const el = document.createElement("div");
+  el.id = "rename-doc-overlay";
+  el.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px";
+  el.innerHTML = `
+    <div style="background:var(--card);border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.15);width:100%;max-width:360px;padding:20px">
+      <h3 style="margin:0 0 14px;font-size:1rem;font-weight:700">Rename File</h3>
+      <input id="rename-doc-input" type="text" value="${esc(doc.title)}"
+        style="width:100%;box-sizing:border-box;border:1.5px solid var(--border-mid);border-radius:8px;padding:8px 12px;font-size:0.88rem;font-family:inherit;background:var(--card);color:var(--text)" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button onclick="document.getElementById('rename-doc-overlay').remove()"
+          style="padding:6px 16px;border-radius:8px;border:1.5px solid var(--border-mid);background:transparent;cursor:pointer;font-size:0.875rem;font-weight:600;font-family:inherit;color:var(--text)">Cancel</button>
+        <button id="rename-doc-save-btn"
+          style="padding:6px 16px;border-radius:8px;border:none;background:var(--accent);color:var(--hub-primary-fg,#fff);cursor:pointer;font-size:0.875rem;font-weight:600;font-family:inherit">Save</button>
+      </div>
+    </div>`;
+  el.addEventListener("click", e => { if (e.target === el) el.remove(); });
+  document.body.appendChild(el);
+  const input = document.getElementById("rename-doc-input");
+  input?.focus(); input?.select();
+  input?.addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("rename-doc-save-btn")?.click();
+    if (e.key === "Escape") el.remove();
+  });
+  document.getElementById("rename-doc-save-btn").addEventListener("click", async () => {
+    const name = document.getElementById("rename-doc-input")?.value?.trim();
+    if (!name) return;
+    const btn = document.getElementById("rename-doc-save-btn");
+    btn.disabled = true; btn.textContent = "Saving…";
+    await fetch(`${DOCS}/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: name }) });
+    documents = documents.map(d => d.id === id ? { ...d, title: name } : d);
+    el.remove();
+    renderMain();
+  });
+};
 
 window.backToSettings = renderSettingsModal;
 window.openItemForm   = openItemForm;
