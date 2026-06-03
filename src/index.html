@@ -239,12 +239,8 @@ async function loadActivities() {
   activities = rows ?? [];
 }
 async function loadLastLogs() {
+  const { rows } = await db(`SELECT l.* FROM logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM logs GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx`);
   lastLogs = {};
-  const curActs = activities.filter(a => a.item_id === selectedId);
-  if (!curActs.length) return;
-  const ids = curActs.map(a => a.id);
-  const ph  = ids.map(() => "?").join(",");
-  const { rows } = await db(`SELECT l.* FROM logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM logs WHERE activity_id IN (${ph}) GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx`, ids);
   for (const r of rows ?? []) lastLogs[r.activity_id] = r;
 }
 async function loadDocuments() {
@@ -269,12 +265,13 @@ async function markDone(activityId) {
 async function saveLog(activityId, notes) {
   const id  = crypto.randomUUID();
   const now = new Date().toISOString();
-  // Keep full history — no pruning
-  await db(`INSERT INTO logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, activityId, selectedId, ME.id, now, notes, now]);
+  // Optimistic update — reflect in UI immediately, persist in background
   lastLogs[activityId] = { id, activity_id: activityId, item_id: selectedId, done_by: ME.id, done_at: now, notes };
   closeModal();
   renderMain();
+  // Keep full history — no pruning
+  db(`INSERT INTO logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, activityId, selectedId, ME.id, now, notes, now]);
 }
 
 function openLogEntryModal(activity) {
@@ -296,8 +293,6 @@ function openLogEntryModal(activity) {
 
 window.submitLog = async activityId => {
   const notes = document.getElementById("log-notes").value.trim();
-  const btn = modalEl?.querySelector('.modal-actions .btn-primary');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   await saveLog(activityId, notes);
 };
 
@@ -729,7 +724,13 @@ window.openActForm    = openActForm;
 window.closeModal     = closeModal;
 window.markDone       = markDone;
 window.openHistory    = openHistoryModal;
-window.selectItem     = async id => { selectedId = id; await loadLastLogs(); await loadDocuments(); renderMain(); };
+window.selectItem = async id => {
+  selectedId = id;
+  documents = [];
+  renderMain();
+  await loadDocuments();
+  renderMain();
+};
 
 function handleDeepLink() {
   const itemId = new URLSearchParams(window.location.search).get("itemId");
