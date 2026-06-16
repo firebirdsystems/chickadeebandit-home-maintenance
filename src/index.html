@@ -233,13 +233,13 @@ async function loadMembers() {
   if (!CONTEXT) { members = [{ id: "demo-1", name: "Alex", role: "adult" }, { id: "demo-2", name: "Jordan", role: "adult" }]; return; }
   try { const res = await fetch(`${CONTEXT}?keys=family.members`); members = ((await res.json())["family.members"]) ?? []; } catch { members = []; }
 }
-async function loadItems()  { const { rows } = await db(`SELECT * FROM items ORDER BY created_at`); items = rows ?? []; }
+async function loadItems()  { const { rows } = await db(`SELECT * FROM app_home_maintenance__items ORDER BY created_at`); items = rows ?? []; }
 async function loadActivities() {
-  const { rows } = await db(`SELECT * FROM activities ORDER BY item_id, sort_order, created_at`);
+  const { rows } = await db(`SELECT * FROM app_home_maintenance__activities ORDER BY item_id, sort_order, created_at`);
   activities = rows ?? [];
 }
 async function loadLastLogs() {
-  const { rows } = await db(`SELECT l.* FROM logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM logs GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx`);
+  const { rows } = await db(`SELECT l.* FROM app_home_maintenance__logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM app_home_maintenance__logs GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx`);
   lastLogs = {};
   for (const r of rows ?? []) lastLogs[r.activity_id] = r;
 }
@@ -270,7 +270,7 @@ async function saveLog(activityId, notes) {
   closeModal();
   renderMain();
   // Keep full history — no pruning
-  db(`INSERT INTO logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [id, activityId, selectedId, ME.id, now, notes, now]);
 }
 
@@ -300,7 +300,7 @@ window.submitLog = async activityId => {
 async function openHistoryModal(activityId) {
   const activity = activities.find(a => a.id === activityId);
   if (!activity) return;
-  const { rows } = await db(`SELECT * FROM logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 50`, [activityId]);
+  const { rows } = await db(`SELECT * FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 50`, [activityId]);
   const logs = rows ?? [];
 
   const historyHtml = logs.length === 0
@@ -330,9 +330,9 @@ async function openHistoryModal(activityId) {
 
 window.deleteLog = async (logId, activityId) => {
   if (!await hubConfirm({ message: "Delete this log entry?", confirmLabel: "Delete", destructive: true })) return;
-  await db(`DELETE FROM logs WHERE id = ?`, [logId]);
+  await db(`DELETE FROM app_home_maintenance__logs WHERE id = ?`, [logId]);
   // Refresh last log cache for this activity
-  const { rows } = await db(`SELECT * FROM logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [activityId]);
+  const { rows } = await db(`SELECT * FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [activityId]);
   if (rows?.length) lastLogs[activityId] = rows[0];
   else delete lastLogs[activityId];
   await openHistoryModal(activityId);
@@ -377,11 +377,11 @@ async function deleteDocument(docId, fileKey) {
 async function saveItem(fields, id = null) {
   const now = new Date().toISOString();
   if (id) {
-    await db(`UPDATE items SET name = ?, emoji = ?, location = ?, notes = ? WHERE id = ?`, [fields.name, fields.emoji, fields.location, fields.notes, id]);
+    await db(`UPDATE app_home_maintenance__items SET name = ?, emoji = ?, location = ?, notes = ? WHERE id = ?`, [fields.name, fields.emoji, fields.location, fields.notes, id]);
     items = items.map(i => i.id === id ? { ...i, ...fields } : i);
   } else {
     const newId = crypto.randomUUID();
-    await db(`INSERT INTO items (id, name, emoji, location, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [newId, fields.name, fields.emoji, fields.location, fields.notes, now]);
+    await db(`INSERT INTO app_home_maintenance__items (id, name, emoji, location, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [newId, fields.name, fields.emoji, fields.location, fields.notes, now]);
     items = [...items, { id: newId, ...fields, created_at: now }];
     if (!selectedId) selectedId = newId;
     // Seed defaults based on emoji/name heuristics
@@ -399,7 +399,7 @@ async function saveItem(fields, id = null) {
     }
     for (let i = 0; i < defaults.length; i++) {
       const aId = crypto.randomUUID();
-      await db(`INSERT INTO activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      await db(`INSERT INTO app_home_maintenance__activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [aId, newId, defaults[i].name, defaults[i].icon, defaults[i].days, i, now]);
       activities = [...activities, { id: aId, item_id: newId, name: defaults[i].name, icon: defaults[i].icon, interval_days: defaults[i].days, sort_order: i, created_at: now }];
     }
@@ -408,9 +408,9 @@ async function saveItem(fields, id = null) {
 
 async function deleteItem(id) {
   if (!await hubConfirm({ message: "Delete this item?", description: "All maintenance records will be permanently removed.", confirmLabel: "Delete item", destructive: true })) return false;
-  await db(`DELETE FROM items WHERE id = ?`, [id]);
-  await db(`DELETE FROM activities WHERE item_id = ?`, [id]);
-  await db(`DELETE FROM logs WHERE item_id = ?`, [id]);
+  await db(`DELETE FROM app_home_maintenance__items WHERE id = ?`, [id]);
+  await db(`DELETE FROM app_home_maintenance__activities WHERE item_id = ?`, [id]);
+  await db(`DELETE FROM app_home_maintenance__logs WHERE item_id = ?`, [id]);
   // Remove hub documents linked to this item (hub cascade deletes on app uninstall,
   // but we clean up eagerly here too)
   if (DOCS) {
@@ -431,17 +431,17 @@ async function saveActivity(fields, id = null) {
   const now = new Date().toISOString();
   const itemId = actFormItemId ?? selectedId;
   if (id) {
-    await db(`UPDATE activities SET name = ?, icon = ?, interval_days = ? WHERE id = ?`, [fields.name, fields.icon, fields.interval_days, id]);
+    await db(`UPDATE app_home_maintenance__activities SET name = ?, icon = ?, interval_days = ? WHERE id = ?`, [fields.name, fields.icon, fields.interval_days, id]);
     activities = activities.map(a => a.id === id ? { ...a, ...fields } : a);
   } else {
     const newId = crypto.randomUUID();
     const sortOrder = activities.filter(a => a.item_id === itemId).length;
-    await db(`INSERT INTO activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    await db(`INSERT INTO app_home_maintenance__activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [newId, itemId, fields.name, fields.icon, fields.interval_days, sortOrder, now]);
     activities = [...activities, { id: newId, item_id: itemId, ...fields }];
     if (fields.lastDoneAt) {
       const logId = crypto.randomUUID();
-      await db(`INSERT INTO logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      await db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [logId, newId, itemId, ME.id, fields.lastDoneAt, "", now]);
       lastLogs[newId] = { id: logId, activity_id: newId, item_id: itemId, done_by: ME.id, done_at: fields.lastDoneAt, notes: "" };
     }
@@ -450,8 +450,8 @@ async function saveActivity(fields, id = null) {
 
 async function deleteActivity(id) {
   if (!await hubConfirm({ message: "Delete this activity?", description: "The activity and its log history will be permanently removed.", confirmLabel: "Delete", destructive: true })) return false;
-  await db(`DELETE FROM activities WHERE id = ?`, [id]);
-  await db(`DELETE FROM logs WHERE activity_id = ?`, [id]);
+  await db(`DELETE FROM app_home_maintenance__activities WHERE id = ?`, [id]);
+  await db(`DELETE FROM app_home_maintenance__logs WHERE activity_id = ?`, [id]);
   activities = activities.filter(a => a.id !== id);
   delete lastLogs[id];
   return true;

@@ -88,11 +88,11 @@ async function load() {
   // Fetch all activities and their most recent log
   const [{ rows: activities }, { rows: lastLogs }] = await Promise.all([
     dbq(`SELECT a.id, a.name, a.icon, a.interval_days, i.name AS item_name, i.emoji AS item_emoji
-         FROM activities a
-         JOIN items i ON i.id = a.item_id
+         FROM app_home_maintenance__activities a
+         JOIN app_home_maintenance__items i ON i.id = a.item_id
          ORDER BY i.name, a.sort_order, a.created_at`),
     dbq(`SELECT l.activity_id, MAX(l.done_at) AS last_done
-         FROM logs l
+         FROM app_home_maintenance__logs l
          GROUP BY l.activity_id`),
   ]);
 

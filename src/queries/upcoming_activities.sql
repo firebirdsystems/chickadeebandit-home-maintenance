@@ -8,19 +8,16 @@ SELECT
   i.emoji       AS item_emoji,
   i.location,
   MAX(l.done_at) AS last_done_at,
-  (MAX(l.done_at)::date + a.interval_days::integer)::text AS next_due_at
-FROM activities a
-JOIN items i
-  ON i.id            = a.item_id
-  AND i.household_id = a.household_id
-LEFT JOIN logs l
-  ON l.activity_id   = a.id
-  AND l.household_id = a.household_id
-WHERE a.household_id = current_setting('app.household_id', true)::uuid
+  date(MAX(l.done_at), '+' || a.interval_days || ' days') AS next_due_at
+FROM app_home_maintenance__activities a
+JOIN app_home_maintenance__items i
+  ON i.id = a.item_id
+LEFT JOIN app_home_maintenance__logs l
+  ON l.activity_id = a.id
 GROUP BY a.id, a.name, a.icon, a.interval_days, i.id, i.name, i.emoji, i.location
 HAVING
   MAX(l.done_at) IS NOT NULL
-  AND (MAX(l.done_at)::date + a.interval_days::integer)
-      BETWEEN CURRENT_DATE AND (CURRENT_DATE + 60)
+  AND date(MAX(l.done_at), '+' || a.interval_days || ' days')
+      BETWEEN CURRENT_DATE AND date('now', '+60 days')
 ORDER BY next_due_at
 LIMIT 100

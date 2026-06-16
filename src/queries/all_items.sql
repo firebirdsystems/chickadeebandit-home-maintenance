@@ -5,7 +5,6 @@ SELECT
   location,
   notes,
   created_at
-FROM items
-WHERE household_id = current_setting('app.household_id', true)::uuid
+FROM app_home_maintenance__items
 ORDER BY name
 LIMIT 200
