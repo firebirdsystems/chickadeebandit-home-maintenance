@@ -41,3 +41,15 @@ CREATE TABLE IF NOT EXISTS app_home_maintenance__documents (
   created_at   TEXT NOT NULL,
   PRIMARY KEY (id)
 );
+
+CREATE INDEX IF NOT EXISTS maintenance_activities_item_sort_idx
+  ON app_home_maintenance__activities (item_id, sort_order, created_at);
+
+CREATE INDEX IF NOT EXISTS maintenance_logs_activity_done_idx
+  ON app_home_maintenance__logs (activity_id, done_at DESC);
+
+CREATE INDEX IF NOT EXISTS maintenance_logs_item_idx
+  ON app_home_maintenance__logs (item_id);
+
+CREATE INDEX IF NOT EXISTS maintenance_documents_item_idx
+  ON app_home_maintenance__documents (item_id, created_at);

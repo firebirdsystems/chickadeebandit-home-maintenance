@@ -153,7 +153,7 @@ async function load() {
   } else {
     body = `<div class="item-list">
       ${urgent.map(a => `<div class="item-row">
-        <div class="item-icon">${a.icon ?? "🔧"}</div>
+        <div class="item-icon">${esc(a.icon ?? "🔧")}</div>
         <div class="item-info">
           <div class="item-name">${esc(a.name)}</div>
           <div class="item-sub">${esc(a.item_name)}</div>

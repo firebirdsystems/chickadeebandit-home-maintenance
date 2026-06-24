@@ -219,6 +219,10 @@ let actFormItemId = null; // item context for the open activity form
 let refreshTimer  = null;
 let docSearch     = "";
 
+function isSafeId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(value);
+}
+
 async function db(sql, params = []) {
   if (!DB) return { rows: [] };
   const res = await fetch(DB, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql, params }) });
@@ -233,15 +237,20 @@ async function loadMembers() {
   if (!CONTEXT) { members = [{ id: "demo-1", name: "Alex", role: "adult" }, { id: "demo-2", name: "Jordan", role: "adult" }]; return; }
   try { const res = await fetch(`${CONTEXT}?keys=family.members`); members = ((await res.json())["family.members"]) ?? []; } catch { members = []; }
 }
-async function loadItems()  { const { rows } = await db(`SELECT * FROM app_home_maintenance__items ORDER BY created_at`); items = rows ?? []; }
+async function loadItems()  {
+  const { rows } = await db(`SELECT * FROM app_home_maintenance__items ORDER BY created_at`);
+  items = (rows ?? []).filter(i => isSafeId(i.id));
+}
 async function loadActivities() {
   const { rows } = await db(`SELECT * FROM app_home_maintenance__activities ORDER BY item_id, sort_order, created_at`);
-  activities = rows ?? [];
+  activities = (rows ?? []).filter(a => isSafeId(a.id) && isSafeId(a.item_id));
 }
 async function loadLastLogs() {
   const { rows } = await db(`SELECT l.* FROM app_home_maintenance__logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM app_home_maintenance__logs GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx`);
   lastLogs = {};
-  for (const r of rows ?? []) lastLogs[r.activity_id] = r;
+  for (const r of rows ?? []) {
+    if (isSafeId(r.id) && isSafeId(r.activity_id) && isSafeId(r.item_id)) lastLogs[r.activity_id] = r;
+  }
 }
 async function loadDocuments() {
   if (!selectedId || !DOCS) { documents = []; return; }
@@ -278,7 +287,7 @@ function openLogEntryModal(activity) {
   openModal(`
     <h3>✓ Mark as Done</h3>
     <div style="margin-bottom:14px">
-      <strong>${activity.icon} ${esc(activity.name)}</strong>
+      <strong>${esc(activity.icon)} ${esc(activity.name)}</strong>
       <div style="font-size:.82rem;color:var(--muted);margin-top:2px">${esc(items.find(i => i.id === selectedId)?.name ?? "")}</div>
     </div>
     <div class="form-group">
@@ -301,7 +310,9 @@ async function openHistoryModal(activityId) {
   const activity = activities.find(a => a.id === activityId);
   if (!activity) return;
   const { rows } = await db(`SELECT * FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 50`, [activityId]);
-  const logs = rows ?? [];
+  const logs = (rows ?? []).filter(l =>
+    isSafeId(l.id) && isSafeId(l.activity_id) && isSafeId(l.item_id)
+  );
 
   const historyHtml = logs.length === 0
     ? `<div class="empty-sm">No history yet — tap Done to log the first entry.</div>`
@@ -322,7 +333,7 @@ async function openHistoryModal(activityId) {
 
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <h3 style="margin-bottom:0">${activity.icon} ${esc(activity.name)} History</h3>
+      <h3 style="margin-bottom:0">${esc(activity.icon)} ${esc(activity.name)} History</h3>
       <button class="btn btn-ghost btn-sm" onclick="closeModal()">Close</button>
     </div>
     <div class="history-list">${historyHtml}</div>`);
@@ -351,7 +362,7 @@ async function uploadDocument(file) {
     const res  = await fetch(DOCS, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: file.name, category: "home",
+        title: file.name, category: "home", sharedWith: ["adults"],
         fileKey: data.id, mimeType: file.type, sizeBytes: file.size,
         sourceId: selectedId,
       }),
@@ -485,7 +496,7 @@ function renderCard(activity) {
   return `
     <div class="activity-card" style="--status-color:${color};--status-pct:${pctC.toFixed(3)}">
       <div class="card-body" onclick="openHistory('${activity.id}')">
-        <div class="card-top"><span class="card-icon">${activity.icon}</span><span class="card-name">${esc(activity.name)}</span><span class="status-dot"></span></div>
+        <div class="card-top"><span class="card-icon">${esc(activity.icon)}</span><span class="card-name">${esc(activity.name)}</span><span class="status-dot"></span></div>
         <div class="card-label">${label}</div>
         ${lastByHtml}
         <div class="progress-track"><div class="progress-fill"></div></div>
@@ -541,7 +552,7 @@ function renderMain() {
   const meIsAdmin = isAdult(ME);
   const curActs   = activities.filter(a => a.item_id === selectedId);
   const tabsHtml  = items.length > 1
-    ? `<div class="item-tabs">${items.map(i => `<button class="item-tab ${i.id === selectedId ? "active" : ""}" onclick="selectItem('${i.id}')">${i.emoji} ${esc(i.name)}</button>`).join("")}</div>` : "";
+    ? `<div class="item-tabs">${items.map(i => `<button class="item-tab ${i.id === selectedId ? "active" : ""}" onclick="selectItem('${i.id}')">${esc(i.emoji)} ${esc(i.name)}</button>`).join("")}</div>` : "";
 
   let body = "";
   if (items.length === 0) {
@@ -555,7 +566,7 @@ function renderMain() {
 
   document.getElementById("root").innerHTML = `
     <header>
-      <div><h1>${item ? `${item.emoji} ${esc(item.name)}` : "🔧 Home Maintenance"}</h1><div class="sub">${item?.location ? esc(item.location) : "Maintenance tracker"}</div></div>
+      <div><h1>${item ? `${esc(item.emoji)} ${esc(item.name)}` : "🔧 Home Maintenance"}</h1><div class="sub">${item?.location ? esc(item.location) : "Maintenance tracker"}</div></div>
       ${meIsAdmin ? `<button class="btn btn-icon" onclick="openSettings()" title="Settings">⚙️</button>` : ""}
     </header>
     ${tabsHtml}${body}`;
@@ -569,7 +580,7 @@ function renderSettingsModal() {
     const iActs = activities.filter(a => a.item_id === i.id);
     const actsHtml = iActs.map(a => `
       <div class="act-row">
-        <div class="info"><strong>${a.icon} ${esc(a.name)}</strong> <span class="sched-meta">Every ${INTERVAL_UNIT(a.interval_days)}</span></div>
+        <div class="info"><strong>${esc(a.icon)} ${esc(a.name)}</strong> <span class="sched-meta">Every ${INTERVAL_UNIT(a.interval_days)}</span></div>
         <div style="display:flex;gap:4px;flex-shrink:0">
           <button class="btn btn-ghost btn-sm" onclick="openActForm('${a.id}')">Edit</button>
           <button class="btn btn-danger btn-sm" onclick="doDelAct('${a.id}')">Delete</button>
@@ -578,7 +589,7 @@ function renderSettingsModal() {
     return `
       <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div class="info"><strong>${i.emoji} ${esc(i.name)}</strong>${i.location ? ` <span class="muted">· ${esc(i.location)}</span>` : ""}</div>
+          <div class="info"><strong>${esc(i.emoji)} ${esc(i.name)}</strong>${i.location ? ` <span class="muted">· ${esc(i.location)}</span>` : ""}</div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             <button class="btn btn-ghost btn-sm" onclick="openItemForm('${i.id}')">Edit</button>
             <button class="btn btn-danger btn-sm" onclick="doDelItem('${i.id}')">Delete</button>
