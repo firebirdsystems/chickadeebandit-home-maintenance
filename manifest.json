@@ -31,10 +31,12 @@
   "row_policies": {
     "items": { "kind": "adult_only" },
     "activities": { "kind": "adult_only" },
-    "logs": { "kind": "adult_only" },
-    "documents": { "kind": "adult_only" }
+    "logs": { "kind": "adult_only" }
   },
   "document_acls": {
+    "write": { "require_role": "adult" }
+  },
+  "file_acls": {
     "write": { "require_role": "adult" }
   },
   "nav": {

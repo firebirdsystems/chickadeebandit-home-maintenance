@@ -30,18 +30,6 @@ CREATE TABLE IF NOT EXISTS app_home_maintenance__logs (
   PRIMARY KEY (id)
 );
 
-CREATE TABLE IF NOT EXISTS app_home_maintenance__documents (
-  id           TEXT NOT NULL,
-  item_id      TEXT NOT NULL,
-  name         TEXT NOT NULL,
-  file_id      TEXT NOT NULL,
-  file_url     TEXT NOT NULL,
-  file_size    INTEGER NOT NULL DEFAULT 0,
-  uploaded_by  TEXT NOT NULL,
-  created_at   TEXT NOT NULL,
-  PRIMARY KEY (id)
-);
-
 CREATE INDEX IF NOT EXISTS maintenance_activities_item_sort_idx
   ON app_home_maintenance__activities (item_id, sort_order, created_at);
 
@@ -50,6 +38,3 @@ CREATE INDEX IF NOT EXISTS maintenance_logs_activity_done_idx
 
 CREATE INDEX IF NOT EXISTS maintenance_logs_item_idx
   ON app_home_maintenance__logs (item_id);
-
-CREATE INDEX IF NOT EXISTS maintenance_documents_item_idx
-  ON app_home_maintenance__documents (item_id, created_at);
