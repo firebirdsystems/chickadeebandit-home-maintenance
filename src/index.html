@@ -195,7 +195,7 @@
   <div id="root"><div class="loading">Loading…</div></div>
 </div>
 <script type="module">
-import { memberColor, initial, esc, isAdult, hubConfirm, createFilesHelper } from "/hub-sdk.js";
+import { hubAlert, memberColor, initial, esc, isAdult, hubConfirm, createFilesHelper } from "/hub-sdk.js";
 import {
   formatDays, intervalUnit,
   fmtDate, fmtDateTime,
@@ -371,7 +371,7 @@ async function uploadDocument(file) {
     documents = [{ id: docId, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: selectedId, createdAt: new Date().toISOString() }, ...documents];
     renderMain();
   } catch (err) {
-    alert("Upload failed: " + err.message);
+    hubAlert("Upload failed: " + err.message);
     renderMain();
   }
 }
