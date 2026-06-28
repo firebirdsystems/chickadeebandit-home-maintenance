@@ -292,7 +292,7 @@ function openLogEntryModal(activity) {
     </div>
     <div class="form-group">
       <label>Notes <span class="muted-label">(optional)</span></label>
-      <textarea id="log-notes" rows="3" placeholder="Brand used, cost, what was replaced, any observations…" autofocus></textarea>
+      <textarea id="log-notes" rows="3" placeholder="Brand used, cost, what was replaced, any observations…" data-autofocus></textarea>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -477,6 +477,9 @@ function openModal(html) {
   modalEl.innerHTML = `<div class="modal">${html}</div>`;
   modalEl.addEventListener("click", e => { if (e.target === modalEl) closeModal(); });
   document.body.appendChild(modalEl);
+  // Programmatic focus works inside cross-origin iframes (unlike the autofocus
+  // attribute, which the browser blocks) because it rides the user's click gesture.
+  modalEl.querySelector("[data-autofocus]")?.focus();
 }
 function closeModal() { modalEl?.remove(); modalEl = null; }
 
@@ -621,7 +624,7 @@ function openItemForm(id = null) {
     <h3 style="margin-bottom:16px">${item ? "Edit Item" : "Add Item"}</h3>
     <input type="hidden" id="if-emoji" value="${sel}" />
     <div class="form-group"><label>Icon</label><div class="emoji-grid">${eg}</div></div>
-    <div class="form-group"><label>Name</label><input id="if-name" type="text" value="${esc(item?.name ?? "")}" placeholder="Honda Civic 2019, Downstairs HVAC…" autofocus /></div>
+    <div class="form-group"><label>Name</label><input id="if-name" type="text" value="${esc(item?.name ?? "")}" placeholder="Honda Civic 2019, Downstairs HVAC…" data-autofocus /></div>
     <div class="form-group"><label>Location <span class="muted-label">(optional)</span></label><input id="if-loc" type="text" value="${esc(item?.location ?? "")}" placeholder="Garage, Basement…" /></div>
     <div class="form-group"><label>Notes <span class="muted-label">(optional)</span></label><textarea id="if-notes" rows="2" placeholder="VIN, model number, warranty expiry…">${esc(item?.notes ?? "")}</textarea></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="backToSettings()">Back</button><button class="btn btn-primary" onclick="submitItem('${id ?? ""}')">${item ? "Save" : "Add Item"}</button></div>`);
@@ -653,7 +656,7 @@ function openActForm(id = null, itemId = null) {
     <h3 style="margin-bottom:16px">${a ? "Edit Task" : "Add Task"}</h3>
     <input type="hidden" id="af-icon" value="${sel}" />
     <div class="form-group"><label>Icon</label><div class="emoji-grid">${ig}</div></div>
-    <div class="form-group"><label>Task name</label><input id="af-name" type="text" value="${esc(a?.name ?? "")}" placeholder="Oil Change, Filter Replacement…" autofocus /></div>
+    <div class="form-group"><label>Task name</label><input id="af-name" type="text" value="${esc(a?.name ?? "")}" placeholder="Oil Change, Filter Replacement…" data-autofocus /></div>
     <div class="form-group"><label>Interval</label><select id="af-preset" onchange="toggleCustomDays(this)">${presetOpts}</select></div>
     <div id="custom-days-row" style="${(a && !INTERVAL_PRESETS.some(p => p.days === a.interval_days)) ? "" : "display:none"}">
       <div class="form-group"><label>Custom interval (days)</label><input id="af-days" type="number" min="1" max="3650" step="1" value="${a?.interval_days ?? 90}" style="max-width:140px" /></div>
