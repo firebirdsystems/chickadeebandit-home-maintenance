@@ -29,15 +29,25 @@
   },
   "storage": "db",
   "row_policies": {
-    "items": { "kind": "adult_only" },
-    "activities": { "kind": "adult_only" },
-    "logs": { "kind": "adult_only" }
+    "items": {
+      "kind": "adult_only"
+    },
+    "activities": {
+      "kind": "adult_only"
+    },
+    "logs": {
+      "kind": "adult_only"
+    }
   },
   "document_acls": {
-    "write": { "require_role": "adult" }
+    "write": {
+      "require_role": "adult"
+    }
   },
   "file_acls": {
-    "write": { "require_role": "adult" }
+    "write": {
+      "require_role": "adult"
+    }
   },
   "nav": {
     "label": "Maintenance"
@@ -55,7 +65,33 @@
   "ai_access": {
     "allowed": true,
     "mode": "read_write",
-    "db_exports": ["overdue_activities", "upcoming_activities", "all_items"],
-    "db_mutations": ["update_activity_interval", "update_item_notes"]
+    "db_exports": [
+      "overdue_activities",
+      "upcoming_activities",
+      "all_items"
+    ],
+    "db_mutations": [
+      "update_activity_interval",
+      "update_item_notes"
+    ]
+  },
+  "digest": {
+    "kind": "recurring_due",
+    "activity_table": "activities",
+    "activity_label_column": "name",
+    "activity_icon_column": "icon",
+    "interval_column": "interval_days",
+    "interval_unit": "days",
+    "default_interval": 90,
+    "parent": {
+      "table": "items",
+      "activity_fk_column": "item_id",
+      "parent_label_column": "name"
+    },
+    "last_done": {
+      "table": "logs",
+      "activity_fk_column": "activity_id",
+      "timestamp_column": "done_at"
+    }
   }
 }

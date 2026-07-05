@@ -21,5 +21,5 @@ GROUP BY a.id, a.name, a.icon, a.interval_days, i.id, i.name, i.emoji, i.locatio
 HAVING
   MAX(l.done_at) IS NULL
   OR date(MAX(l.done_at), '+' || a.interval_days || ' days') < CURRENT_DATE
-ORDER BY next_due_at NULLS FIRST, a.name
+ORDER BY next_due_at, a.name
 LIMIT 100
