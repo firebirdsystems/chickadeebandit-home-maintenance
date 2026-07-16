@@ -444,6 +444,17 @@ async function saveActivity(fields, id = null) {
   if (id) {
     await db(`UPDATE app_home_maintenance__activities SET name = ?, icon = ?, interval_days = ? WHERE id = ?`, [fields.name, fields.icon, fields.interval_days, id]);
     activities = activities.map(a => a.id === id ? { ...a, ...fields } : a);
+    if (fields.lastDoneAt) {
+      const { rows } = await db(`SELECT id FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [id]);
+      const existing = rows?.[0]?.id;
+      if (existing) {
+        await db(`UPDATE app_home_maintenance__logs SET done_at = ? WHERE id = ?`, [fields.lastDoneAt, existing]);
+      } else {
+        const logId = crypto.randomUUID();
+        await db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [logId, id, itemId, ME.id, fields.lastDoneAt, "", now]);
+      }
+    }
   } else {
     const newId = crypto.randomUUID();
     const sortOrder = activities.filter(a => a.item_id === itemId).length;
@@ -643,10 +654,15 @@ window.submitItem = async id => {
 const ACT_ICONS = ["🔧","🛢️","🔄","🌀","🔍","💧","🪛","🔩","🧹","🪣","⚙️","🔌","💡","🪠","🔑","🛞"];
 const INTERVAL_PRESETS = [{ label: "Monthly (30d)", days: 30 }, { label: "3 Months (90d)", days: 90 }, { label: "6 Months (180d)", days: 180 }, { label: "Annually (365d)", days: 365 }, { label: "Custom", days: null }];
 
-function openActForm(id = null, itemId = null) {
+async function openActForm(id = null, itemId = null) {
   actFormItemId = id ? (activities.find(x => x.id === id)?.item_id ?? selectedId) : (itemId ?? selectedId);
   const a   = id ? activities.find(x => x.id === id) : null;
   const sel = a?.icon ?? "🔧";
+  let lastDoneVal = "";
+  if (a) {
+    const { rows } = await db(`SELECT done_at FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [id]);
+    if (rows?.[0]?.done_at) lastDoneVal = new Date(rows[0].done_at).toISOString().slice(0, 10);
+  }
   const ig  = ACT_ICONS.map(e => `<button type="button" class="emoji-btn ${sel === e ? "selected" : ""}" onclick="pickActIcon(this,'${e}')">${e}</button>`).join("");
   const presetOpts = INTERVAL_PRESETS.map(p => {
     const selected = p.days && a?.interval_days === p.days ? "selected" : (!p.days && a && !INTERVAL_PRESETS.some(x => x.days === a.interval_days)) ? "selected" : (!a && p.days === 90) ? "selected" : "";
@@ -661,7 +677,7 @@ function openActForm(id = null, itemId = null) {
     <div id="custom-days-row" style="${(a && !INTERVAL_PRESETS.some(p => p.days === a.interval_days)) ? "" : "display:none"}">
       <div class="form-group"><label>Custom interval (days)</label><input id="af-days" type="number" min="1" max="3650" step="1" value="${a?.interval_days ?? 90}" style="max-width:140px" /></div>
     </div>
-    ${!a ? `<div class="form-group"><label>Last done <span class="muted-label">(optional)</span></label><input id="af-lastdone" type="date" style="max-width:180px" max="${new Date().toISOString().slice(0,10)}" /></div>` : ""}
+    <div class="form-group"><label>Last done <span class="muted-label">(optional)</span></label><input id="af-lastdone" type="date" style="max-width:180px" max="${new Date().toISOString().slice(0,10)}" value="${lastDoneVal}" /></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="backToSettings()">Back</button><button class="btn btn-primary" onclick="submitAct('${id ?? ""}')">${a ? "Save" : "Add Task"}</button></div>`);
 }
 window.pickActIcon = (btn, e) => { document.getElementById("af-icon").value = e; btn.closest(".emoji-grid").querySelectorAll(".emoji-btn").forEach(b => b.classList.remove("selected")); btn.classList.add("selected"); };
