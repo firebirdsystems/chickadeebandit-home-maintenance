@@ -1,7 +1,7 @@
 {
   "id": "home-maintenance",
   "name": "Maintenance",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Track recurring maintenance tasks — car oil changes, HVAC filters, appliance servicing — with full history and document storage for warranty PDFs and manuals.",
   "entrypoint": "index.html",
   "runtime": "static",
@@ -55,6 +55,16 @@
   "widget": {
     "label": "Maintenance",
     "size": "small"
+  },
+  "glance": {
+    "source": {
+      "kind": "recurring_due"
+    },
+    "display": {
+      "template": "badge",
+      "label": "overdue",
+      "severity": "warn"
+    }
   },
   "resource_limits": {
     "max_db_bytes": 209715200,
