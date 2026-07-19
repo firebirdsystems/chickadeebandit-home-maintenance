@@ -1,7 +1,7 @@
 {
   "id": "home-maintenance",
   "name": "Maintenance",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Track recurring maintenance tasks — car oil changes, HVAC filters, appliance servicing — with full history and document storage for warranty PDFs and manuals.",
   "entrypoint": "index.html",
   "runtime": "static",
@@ -48,6 +48,40 @@
     "write": {
       "require_role": "adult"
     }
+  },
+  "reports": {
+    "views": [
+      {
+        "id": "service_log",
+        "title": "Maintenance service log",
+        "description": "Every completed maintenance task, newest first. Hand this to a home buyer, an insurer, or a warranty claim.",
+        "source": {
+          "kind": "sql",
+          "query": "SELECT l.done_at AS done_at, i.name AS item, a.name AS activity, l.notes AS notes FROM app_home_maintenance__logs l JOIN app_home_maintenance__activities a ON a.id = l.activity_id JOIN app_home_maintenance__items i ON i.id = l.item_id WHERE l.done_at >= :range_start AND l.done_at <= :range_end ORDER BY l.done_at DESC"
+        },
+        "columns": [
+          { "key": "done_at", "label": "Date", "format": "date" },
+          { "key": "item", "label": "Item" },
+          { "key": "activity", "label": "Service" },
+          { "key": "notes", "label": "Notes" }
+        ]
+      },
+      {
+        "id": "maintenance_schedule",
+        "title": "Maintenance schedule",
+        "description": "Every item under maintenance and how often each task is meant to recur.",
+        "source": {
+          "kind": "sql",
+          "query": "SELECT i.name AS item, i.location AS location, a.name AS activity, a.interval_days AS interval_days FROM app_home_maintenance__activities a JOIN app_home_maintenance__items i ON i.id = a.item_id ORDER BY i.id, a.sort_order"
+        },
+        "columns": [
+          { "key": "item", "label": "Item" },
+          { "key": "location", "label": "Location" },
+          { "key": "activity", "label": "Service" },
+          { "key": "interval_days", "label": "Every (days)" }
+        ]
+      }
+    ]
   },
   "nav": {
     "label": "Maintenance"
