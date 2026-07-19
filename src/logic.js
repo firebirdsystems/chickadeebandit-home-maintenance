@@ -19,6 +19,25 @@ export function intervalUnit(v) {
   return `${v}d`;
 }
 
+// Date inputs carry a calendar date with no timezone. Round-tripping one through
+// `new Date("2026-07-01")` parses it as UTC midnight, which reads back as the
+// previous day west of UTC — so convert against the local calendar instead.
+export function localDateToISO(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = String(dateStr).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const dt = new Date(y, m - 1, d);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
+
+export function isoToLocalDateInput(iso) {
+  if (!iso) return "";
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return "";
+  const pad = n => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+}
+
 export function fmtDate(iso) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }

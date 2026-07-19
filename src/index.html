@@ -201,6 +201,7 @@ import {
   fmtDate, fmtDateTime,
   statusColor, formatBytes, docIcon,
   activityStatusFromLog,
+  localDateToISO, isoToLocalDateInput,
 } from "./logic.js";
 
 const CONTEXT = window.__CONTEXT_URL ?? "";
@@ -661,7 +662,7 @@ async function openActForm(id = null, itemId = null) {
   let lastDoneVal = "";
   if (a) {
     const { rows } = await db(`SELECT done_at FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [id]);
-    if (rows?.[0]?.done_at) lastDoneVal = new Date(rows[0].done_at).toISOString().slice(0, 10);
+    if (rows?.[0]?.done_at) lastDoneVal = isoToLocalDateInput(rows[0].done_at);
   }
   const ig  = ACT_ICONS.map(e => `<button type="button" class="emoji-btn ${sel === e ? "selected" : ""}" onclick="pickActIcon(this,'${e}')">${e}</button>`).join("");
   const presetOpts = INTERVAL_PRESETS.map(p => {
@@ -677,7 +678,7 @@ async function openActForm(id = null, itemId = null) {
     <div id="custom-days-row" style="${(a && !INTERVAL_PRESETS.some(p => p.days === a.interval_days)) ? "" : "display:none"}">
       <div class="form-group"><label>Custom interval (days)</label><input id="af-days" type="number" min="1" max="3650" step="1" value="${a?.interval_days ?? 90}" style="max-width:140px" /></div>
     </div>
-    <div class="form-group"><label>Last done <span class="muted-label">(optional)</span></label><input id="af-lastdone" type="date" style="max-width:180px" max="${new Date().toISOString().slice(0,10)}" value="${lastDoneVal}" /></div>
+    <div class="form-group"><label>Last done <span class="muted-label">(optional)</span></label><input id="af-lastdone" type="date" style="max-width:180px" max="${isoToLocalDateInput(new Date().toISOString())}" value="${lastDoneVal}" /></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="backToSettings()">Back</button><button class="btn btn-primary" onclick="submitAct('${id ?? ""}')">${a ? "Save" : "Add Task"}</button></div>`);
 }
 window.pickActIcon = (btn, e) => { document.getElementById("af-icon").value = e; btn.closest(".emoji-grid").querySelectorAll(".emoji-btn").forEach(b => b.classList.remove("selected")); btn.classList.add("selected"); };
@@ -690,7 +691,7 @@ window.submitAct = async id => {
   const btn = modalEl?.querySelector('.modal-actions .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const lastDoneVal = document.getElementById("af-lastdone")?.value;
-  const lastDoneAt  = lastDoneVal ? new Date(lastDoneVal).toISOString() : null;
+  const lastDoneAt  = localDateToISO(lastDoneVal);
   await saveActivity({ name, icon: document.getElementById("af-icon").value, interval_days: days, lastDoneAt }, id || null);
   await loadLastLogs(); renderSettingsModal(); renderMain();
 };

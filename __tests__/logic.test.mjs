@@ -4,6 +4,7 @@ import {
   fmtDate, fmtDateTime,
   statusColor, formatBytes, docIcon,
   activityStatusFromLog,
+  localDateToISO, isoToLocalDateInput,
 } from "../src/logic.js";
 
 // ── formatDays ────────────────────────────────────────────────────────────────
@@ -182,5 +183,37 @@ describe("activityStatusFromLog", () => {
     const log = { done_by: "u1", done_at: new Date(Date.now() - 45 * 86400000).toISOString() };
     const status = activityStatusFromLog(actNoInterval, log, members);
     expect(status.pct).toBeCloseTo(0.5, 1);
+  });
+});
+
+// ── local date round-trip ─────────────────────────────────────────────────────
+
+describe("localDateToISO / isoToLocalDateInput", () => {
+  it("round-trips a date input back to the same calendar date", () => {
+    for (const d of ["2026-07-01", "2026-01-15", "2026-12-31", "2026-03-08"]) {
+      expect(isoToLocalDateInput(localDateToISO(d))).toBe(d);
+    }
+  });
+
+  it("anchors the stored instant to local midnight, not UTC midnight", () => {
+    const dt = new Date(localDateToISO("2026-07-01"));
+    expect(dt.getFullYear()).toBe(2026);
+    expect(dt.getMonth()).toBe(6);
+    expect(dt.getDate()).toBe(1);
+    expect(dt.getHours()).toBe(0);
+  });
+
+  it("reads a stored instant back as its local calendar date", () => {
+    const dt = new Date(2026, 6, 1, 23, 30);
+    expect(isoToLocalDateInput(dt.toISOString())).toBe("2026-07-01");
+  });
+
+  it("returns null/empty for blank or malformed values", () => {
+    expect(localDateToISO("")).toBeNull();
+    expect(localDateToISO(null)).toBeNull();
+    expect(localDateToISO("not-a-date")).toBeNull();
+    expect(isoToLocalDateInput("")).toBe("");
+    expect(isoToLocalDateInput(null)).toBe("");
+    expect(isoToLocalDateInput("not-a-date")).toBe("");
   });
 });
