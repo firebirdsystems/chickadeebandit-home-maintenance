@@ -18,6 +18,8 @@ GROUP BY a.id, a.name, a.icon, a.interval_days, i.id, i.name, i.emoji, i.locatio
 HAVING
   MAX(l.done_at) IS NOT NULL
   AND date(MAX(l.done_at), '+' || a.interval_days || ' days')
-      BETWEEN CURRENT_DATE AND date('now', '+60 days')
+-- Anchored to :today (household-local) rather than CURRENT_DATE / date('now'),
+-- which are UTC and shift the window by a day for most of the world.
+      BETWEEN :today AND date(:today, '+60 days')
 ORDER BY next_due_at
 LIMIT 100

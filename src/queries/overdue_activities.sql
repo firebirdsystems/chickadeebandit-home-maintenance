@@ -20,6 +20,9 @@ LEFT JOIN app_home_maintenance__logs l
 GROUP BY a.id, a.name, a.icon, a.interval_days, i.id, i.name, i.emoji, i.location
 HAVING
   MAX(l.done_at) IS NULL
-  OR date(MAX(l.done_at), '+' || a.interval_days || ' days') < CURRENT_DATE
-ORDER BY next_due_at, a.name
+-- :today is the household-local date. CURRENT_DATE is UTC and would call an
+-- activity overdue up to a day early or late depending on the timezone.
+  OR date(MAX(l.done_at), '+' || a.interval_days || ' days') < :today
+-- a.name is encrypted at rest, so it cannot be a tiebreak here.
+ORDER BY next_due_at
 LIMIT 100

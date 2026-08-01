@@ -28,6 +28,9 @@
     "requires_approval": false
   },
   "storage": "db",
+  "member_references": {
+    "logs": { "column": "done_by", "on_removed": "keep" }
+  },
   "row_policies": {
     "items": {
       "kind": "adult_only"

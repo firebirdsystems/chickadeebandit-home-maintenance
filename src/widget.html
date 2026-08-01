@@ -81,7 +81,13 @@ async function dbq(sql, params = []) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sql, params }),
   });
-  return res.json();
+  const json = await res.json();
+  // The hub reports a refused write as a JSON body with an `error` key
+  // (403 row policy, 400 bad statement, 507 over quota). fetch() does not
+  // reject on those, so without this throw every caller's rollback and
+  // error toast below is unreachable code.
+  if (!res.ok || json.error) throw new Error(json.error || `Database request failed (${res.status})`);
+  return json;
 }
 
 async function load() {
@@ -90,7 +96,9 @@ async function load() {
     dbq(`SELECT a.id, a.name, a.icon, a.interval_days, i.name AS item_name, i.emoji AS item_emoji
          FROM app_home_maintenance__activities a
          JOIN app_home_maintenance__items i ON i.id = a.item_id
-         ORDER BY i.name, a.sort_order, a.created_at`),
+         -- i.name is encrypted at rest, so it cannot lead the sort here; both
+         -- sort_order and created_at are plaintext and order correctly.
+         ORDER BY a.sort_order, a.created_at`),
     dbq(`SELECT l.activity_id, MAX(l.done_at) AS last_done
          FROM app_home_maintenance__logs l
          GROUP BY l.activity_id`),
