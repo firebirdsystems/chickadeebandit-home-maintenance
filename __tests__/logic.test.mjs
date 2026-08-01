@@ -4,7 +4,7 @@ import {
   fmtDate, fmtDateTime,
   statusColor, formatBytes, docIcon,
   activityStatusFromLog,
-  localDateToISO, isoToLocalDateInput,
+  localDateToISO, isoToLocalDateInput, searchableFields,
 } from "../src/logic.js";
 
 // ── formatDays ────────────────────────────────────────────────────────────────
@@ -215,5 +215,13 @@ describe("localDateToISO / isoToLocalDateInput", () => {
     expect(isoToLocalDateInput("")).toBe("");
     expect(isoToLocalDateInput(null)).toBe("");
     expect(isoToLocalDateInput("not-a-date")).toBe("");
+  });
+});
+
+describe("searchableFields", () => {
+  it("matches on the file kind as well as the name", () => {
+    const fields = searchableFields({ title: "Boiler manual", mimeType: "application/pdf" });
+    expect(fields).toContain("Boiler manual");
+    expect(fields).toContain("application/pdf"); // so typing "pdf" finds it
   });
 });

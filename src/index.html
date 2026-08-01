@@ -195,13 +195,13 @@
   <div id="root"><div class="loading">Loading…</div></div>
 </div>
 <script type="module">
-import { hubAlert, memberColor, initial, esc, isAdult, hubConfirm, createFilesHelper } from "/hub-sdk.js";
+import { hubAlert, memberColor, initial, esc, isAdult, hubConfirm, createFilesHelper, searchMatch } from "/hub-sdk.js";
 import {
   formatDays, intervalUnit,
   fmtDate, fmtDateTime,
   statusColor, formatBytes, docIcon,
   activityStatusFromLog,
-  localDateToISO, isoToLocalDateInput,
+  localDateToISO, isoToLocalDateInput, searchableFields,
 } from "./logic.js";
 
 const CONTEXT = window.__CONTEXT_URL ?? "";
@@ -529,7 +529,7 @@ function renderCard(activity) {
 
 function renderDocsSection() {
   const meIsAdmin = isAdult(ME);
-  const filtered = docSearch ? documents.filter(d => d.title.toLowerCase().includes(docSearch.toLowerCase())) : documents;
+  const filtered = docSearch ? documents.filter(d => searchMatch(docSearch, searchableFields(d))) : documents;
   const docsHtml = filtered.map(d => `
     <a class="doc-row" href="${esc(files.url(d.fileKey))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
       <span class="doc-icon">${docIcon(d.title)}</span>

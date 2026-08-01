@@ -90,3 +90,12 @@ export function activityStatusFromLog(activity, log, members, now = new Date()) 
   const member   = members.find(m => m.id === log.done_by) ?? null;
   return { pct, label, lastBy: { member, agoD: elapsedD, date: fmtDate(log.done_at) } };
 }
+
+/**
+ * Fields the document search matches against (see hub-sdk `searchMatch`). The
+ * mime type is included so "pdf" finds the receipts and manuals by kind, which
+ * is how a maintenance folder is usually browsed.
+ */
+export function searchableFields(doc) {
+  return [doc.title, doc.mimeType];
+}
