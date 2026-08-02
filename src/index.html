@@ -208,6 +208,22 @@ const CONTEXT = window.__CONTEXT_URL ?? "";
 const DB      = window.__DB_URL      ?? "";
 const DOCS    = window.__DOCS_URL    ?? "";
 const ME      = window.__CURRENT_MEMBER ?? null;
+
+const EVENTS = window.__EVENTS_URL ?? "";
+
+async function publishEvent(type, subjectId, payload = {}) {
+  if (!EVENTS) return;
+  try {
+    await fetch(EVENTS, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, subject_id: subjectId, payload }),
+    });
+  } catch {
+    // Best-effort: the row is already written, so a failed publish is not fatal.
+  }
+}
+
 const files   = createFilesHelper(window.__FILES_URL ?? "");
 
 let members      = [];
@@ -288,6 +304,12 @@ async function saveLog(activityId, notes) {
   // Keep full history — no pruning
   db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [id, activityId, selectedId, ME.id, now, notes, now]);
+  publishEvent("maintenance.activity_logged", id, {
+    activity_id: activityId,
+    item_id: selectedId,
+    done_by: ME.id,
+    done_at: now,
+  }).catch(() => {});
 }
 
 function openLogEntryModal(activity) {

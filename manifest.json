@@ -28,6 +28,41 @@
     "requires_approval": false
   },
   "storage": "db",
+  "automation_actions": {
+    "add_item": {
+      "title": "Add a maintenance item",
+      "description": "Track a new piece of equipment when another app's event fires — an appliance added to the warranty vault, a fixture logged during a move.",
+      "params": {
+        "name": {
+          "type": "text",
+          "label": "What it is",
+          "required": true
+        },
+        "location": {
+          "type": "text",
+          "label": "Where it is",
+          "default": ""
+        }
+      },
+      "dedupe": {
+        "table": "items",
+        "column": "source_event_id"
+      },
+      "steps": [
+        {
+          "op": "insert",
+          "table": "items",
+          "values": {
+            "id": "$uuid",
+            "name": ":name",
+            "location": ":location",
+            "created_at": "$now",
+            "source_event_id": "$event_id"
+          }
+        }
+      ]
+    }
+  },
   "member_references": {
     "logs": { "column": "done_by", "on_removed": "keep" }
   },
@@ -87,6 +122,8 @@
       }
     ]
   },
+  "publishes": ["maintenance.activity_logged"],
+  "publish_acls": {"maintenance.activity_logged": {"require_role": "member"}},
   "nav": {
     "label": "Maintenance"
   },
