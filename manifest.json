@@ -1,7 +1,7 @@
 {
   "id": "home-maintenance",
   "name": "Maintenance",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Track recurring maintenance tasks — car oil changes, HVAC filters, appliance servicing — with full history and document storage for warranty PDFs and manuals.",
   "entrypoint": "index.html",
   "runtime": "static",
@@ -63,6 +63,19 @@
       ]
     }
   },
+  "suggested_automations": [
+    {
+      "title": "Catalogue filed maintenance requests",
+      "description": "A maintenance request filed by a member also lands on the home-maintenance list, so the fix gets tracked where upkeep already lives.",
+      "trigger_event": "maintenance_request.filed",
+      "target_app_id": "home-maintenance",
+      "action_id": "add_item",
+      "param_map": {
+        "name": { "kind": "payload_field", "value": "title" },
+        "location": { "kind": "payload_field", "value": "location" }
+      }
+    }
+  ],
   "member_references": {
     "logs": { "column": "done_by", "on_removed": "keep" }
   },
