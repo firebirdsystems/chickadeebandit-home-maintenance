@@ -28,6 +28,11 @@
     "requires_approval": false
   },
   "storage": "db",
+  "preload": {
+    "items": {"sql": "SELECT * FROM app_home_maintenance__items ORDER BY created_at"},
+    "activities": {"sql": "SELECT * FROM app_home_maintenance__activities ORDER BY item_id, sort_order, created_at"},
+    "logs": {"sql": "SELECT l.* FROM app_home_maintenance__logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM app_home_maintenance__logs GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx"}
+  },
   "automation_actions": {
     "add_item": {
       "title": "Add a maintenance item",
