@@ -260,15 +260,25 @@ async function loadMembers() {
   if (!CONTEXT) { members = [{ id: "demo-1", name: "Alex", role: "adult" }, { id: "demo-2", name: "Jordan", role: "adult" }]; return; }
   try { const res = await fetch(`${CONTEXT}?keys=family.members`); members = ((await res.json())["family.members"]) ?? []; } catch { members = []; }
 }
+// items, activities and logs are all `adult_only`: the hub refuses the SELECT
+// itself for a non-adult, not just the write. This app's audience is `adults`,
+// so normally nobody else reaches it — but an admin can hand a child access
+// per-member ("Granted" in the hub's Member access panel), which is checked
+// BEFORE the audience rule. On that path the unconditional reads threw before
+// the first render and the child got a blank frame instead of the read-only
+// empty states below. Skip the read and leave the arrays empty.
 async function loadItems()  {
+  if (!isAdult(ME)) { items = []; return; }
   const { rows } = await db(`SELECT * FROM app_home_maintenance__items ORDER BY created_at`);
   items = (rows ?? []).filter(i => isSafeId(i.id));
 }
 async function loadActivities() {
+  if (!isAdult(ME)) { activities = []; return; }
   const { rows } = await db(`SELECT * FROM app_home_maintenance__activities ORDER BY item_id, sort_order, created_at`);
   activities = (rows ?? []).filter(a => isSafeId(a.id) && isSafeId(a.item_id));
 }
 async function loadLastLogs() {
+  if (!isAdult(ME)) { lastLogs = {}; return; }
   const { rows } = await db(`SELECT l.* FROM app_home_maintenance__logs l INNER JOIN (SELECT activity_id, MAX(done_at) AS mx FROM app_home_maintenance__logs GROUP BY activity_id) m ON l.activity_id = m.activity_id AND l.done_at = m.mx`);
   lastLogs = {};
   for (const r of rows ?? []) {
