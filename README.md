@@ -1,6 +1,6 @@
 # Home Maintenance
 
-A [Chickadee Bandit](http://chickadeebandit.com) app.
+A [Chickadee Bandit](https://chickadeebandit.com/app-library/home-maintenance) app.
 
 Track recurring maintenance tasks — car oil changes, HVAC filters, appliance servicing — with full history and document storage for warranty PDFs and manuals.
 
