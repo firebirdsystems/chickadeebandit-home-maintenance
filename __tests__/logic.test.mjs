@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   formatDays, intervalUnit,
   fmtDate, fmtDateTime,
-  statusColor, formatBytes, docIcon,
+  statusColor, formatBytes, docGlyph,
   activityStatusFromLog,
   localDateToISO, isoToLocalDateInput, searchableFields,
 } from "../src/logic.js";
@@ -117,29 +117,29 @@ describe("formatBytes", () => {
   });
 });
 
-// ── docIcon ───────────────────────────────────────────────────────────────────
+// ── docGlyph ───────────────────────────────────────────────────────────────────
 
-describe("docIcon", () => {
+describe("docGlyph", () => {
   it("returns PDF icon", () => {
-    expect(docIcon("report.pdf")).toBe("📄");
+    expect(docGlyph("report.pdf")).toBe("document");
   });
 
   it("returns image icon", () => {
-    expect(docIcon("photo.jpg")).toBe("🖼️");
-    expect(docIcon("screenshot.PNG")).toBe("🖼️");
+    expect(docGlyph("photo.jpg")).toBe("frame");
+    expect(docGlyph("screenshot.PNG")).toBe("frame");
   });
 
   it("returns Word icon", () => {
-    expect(docIcon("letter.docx")).toBe("📝");
+    expect(docGlyph("letter.docx")).toBe("note");
   });
 
   it("returns spreadsheet icon", () => {
-    expect(docIcon("data.xlsx")).toBe("📊");
+    expect(docGlyph("data.xlsx")).toBe("poll-bars");
   });
 
   it("returns generic icon for unknown extensions", () => {
-    expect(docIcon("archive.zip")).toBe("📎");
-    expect(docIcon("file")).toBe("📎");
+    expect(docGlyph("archive.zip")).toBe("folder");
+    expect(docGlyph("file")).toBe("folder");
   });
 });
 

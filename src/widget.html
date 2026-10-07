@@ -67,6 +67,8 @@
 </head>
 <body>
 <script type="module">
+import { glyph } from "/hub-sdk.js";
+
 const DB     = window.__DB_URL ?? "";
 const APP_ID = "home-maintenance";
 
@@ -157,7 +159,7 @@ async function load() {
       <a href="/open/${APP_ID}" onclick="window.__HUB_OPEN && (event.preventDefault(), window.__HUB_OPEN('${APP_ID}'))" style="color:#111827;font-weight:600;font-size:11px">Add items →</a>
     </div>`;
   } else if (urgent.length === 0) {
-    body = `<div class="empty"><span style="color:#059669;font-size:20px">✓</span><span>All caught up!</span></div>`;
+    body = `<div class="empty"><span style="color:#059669;font-size:20px">${glyph("tick")}</span><span>All caught up!</span></div>`;
   } else {
     body = `<div class="item-list">
       ${urgent.map(a => `<div class="item-row">

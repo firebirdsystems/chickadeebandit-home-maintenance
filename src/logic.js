@@ -69,13 +69,14 @@ export function formatBytes(bytes) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-export function docIcon(name) {
+/** The name of the hub glyph that marks a file type — drawn with the SDK's glyph(). */
+export function docGlyph(name) {
   const ext = name.split(".").pop()?.toLowerCase();
-  if (["pdf"].includes(ext))                          return "📄";
-  if (["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) return "🖼️";
-  if (["doc", "docx"].includes(ext))                  return "📝";
-  if (["xls", "xlsx"].includes(ext))                  return "📊";
-  return "📎";
+  if (["pdf"].includes(ext))                          return "document";
+  if (["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) return "frame";
+  if (["doc", "docx"].includes(ext))                  return "note";
+  if (["xls", "xlsx"].includes(ext))                  return "poll-bars";
+  return "folder";
 }
 
 export function activityStatusFromLog(activity, log, members, now = new Date()) {
