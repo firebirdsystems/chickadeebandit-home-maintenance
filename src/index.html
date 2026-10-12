@@ -187,6 +187,9 @@
     .muted { color: var(--muted); }
 
     .uploading-indicator { font-size: 0.82rem; color: var(--accent); padding: 8px 0; }
+
+    .load-error { margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; background: var(--hub-tint-danger, #fee2e2); color: var(--hub-tint-danger-fg, #b91c1c); font-size: 0.9rem; display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .load-error-retry { font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
   </style>
   <base href="/run/home-maintenance/" />
 </head>
@@ -231,10 +234,12 @@ let items        = [];    // things being maintained (car, HVAC, etc.)
 let activities   = [];    // all tasks across all items
 let lastLogs     = {};    // activityId → most recent log
 let documents    = [];    // documents for selected item
+let documentsUnread = false; // the selected item's documents could not be read: unknown, not none
 let selectedId   = null;
 let actFormItemId = null; // item context for the open activity form
 let refreshTimer  = null;
 let docSearch     = "";
+let loadFailed    = false; // the maintenance list is unread: the first load failed and none has succeeded since
 
 function isSafeId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(value);
@@ -243,13 +248,42 @@ function isSafeId(value) {
 async function db(sql, params = []) {
   if (!DB) return { rows: [] };
   const res = await fetch(DB, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql, params }) });
-  const json = await res.json();
+  const json = await res.json().catch(() => null);
   // The hub reports a refused write as a JSON body with an `error` key
   // (403 row policy, 400 bad statement, 507 over quota). fetch() does not
   // reject on those, so without this throw every caller's rollback and
   // error toast below is unreachable code.
-  if (!res.ok || json.error) throw new Error(json.error || `Database request failed (${res.status})`);
+  if (!res.ok || !json || typeof json !== "object" || json.error) throw new Error(json?.error || `Database request failed (${res.status})`);
   return json;
+}
+
+// Several statements in one transaction: all of them land or none does.
+async function dbBatch(statements) {
+  if (!DB) return statements.map(() => ({ rows: [], changed: 0 }));
+  const res = await fetch(DB, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statements }) });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json || typeof json !== "object" || json.error) throw new Error(json?.error || `Database request failed (${res.status})`);
+  return json.results;
+}
+
+// Changes one hub document, and throws when the hub refuses.
+async function docsWrite(docId, init) {
+  const res = await fetch(`${DOCS}/${docId}`, init);
+  if (res.ok) return;
+  const json = await res.json().catch(() => ({}));
+  throw new Error(json.error || `Document request failed (${res.status})`);
+}
+
+// Runs a member's action and tells them when it fails, so a refused request is
+// not left as an unhandled rejection nobody sees.
+function reporting(what, fn) {
+  return async (...args) => {
+    try {
+      return await fn(...args);
+    } catch (e) {
+      hubAlert(`${what}: ${e?.message ?? "something went wrong."}`);
+    }
+  };
 }
 
 async function initDb() {
@@ -258,7 +292,11 @@ async function initDb() {
 
 async function loadMembers() {
   if (!CONTEXT) { members = [{ id: "demo-1", name: "Alex", role: "adult" }, { id: "demo-2", name: "Jordan", role: "adult" }]; return; }
-  try { const res = await fetch(`${CONTEXT}?keys=family.members`); members = ((await res.json())["family.members"]) ?? []; } catch { members = []; }
+  // A member list that could not be read is a failed load, not a household with nobody in it.
+  const res = await fetch(`${CONTEXT}?keys=family.members`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || typeof data !== "object" || data.error || (Array.isArray(data.$errors) && data.$errors.includes("family.members"))) throw new Error("Couldn’t reach the hub. Try again.");
+  members = data["family.members"] ?? [];
 }
 // items, activities and logs are all `adult_only`: the hub refuses the SELECT
 // itself for a non-adult, not just the write. This app's audience is `adults`,
@@ -286,9 +324,15 @@ async function loadLastLogs() {
   }
 }
 async function loadDocuments() {
+  documentsUnread = false;
   if (!selectedId || !DOCS) { documents = []; return; }
-  const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(selectedId)}`);
-  documents = res.ok ? await res.json() : [];
+  // Optional to the page: a failed read is said in the Documents section, not by the banner.
+  try {
+    const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(selectedId)}`);
+    const list = res.ok ? await res.json() : null;
+    if (!Array.isArray(list)) throw new Error("documents unavailable");
+    documents = list;
+  } catch { documents = []; documentsUnread = true; }
 }
 
 // ─── Status ───────────────────────────────────────────────────────────────
@@ -307,13 +351,21 @@ async function markDone(activityId) {
 async function saveLog(activityId, notes) {
   const id  = crypto.randomUUID();
   const now = new Date().toISOString();
-  // Optimistic update — reflect in UI immediately, persist in background
+  // Optimistic update — reflect in UI immediately, put the earlier entry back if the write is refused
+  const prev = lastLogs[activityId];
   lastLogs[activityId] = { id, activity_id: activityId, item_id: selectedId, done_by: ME.id, done_at: now, notes };
   closeModal();
   renderMain();
   // Keep full history — no pruning
-  db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, activityId, selectedId, ME.id, now, notes, now]);
+  try {
+    await db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, activityId, selectedId, ME.id, now, notes, now]);
+  } catch (e) {
+    if (prev) lastLogs[activityId] = prev; else delete lastLogs[activityId];
+    renderMain();
+    hubAlert(`Could not save the log entry: ${e.message}`);
+    return;
+  }
   publishEvent("maintenance.activity_logged", id, {
     activity_id: activityId,
     item_id: selectedId,
@@ -378,7 +430,7 @@ async function openHistoryModal(activityId) {
     <div class="history-list">${historyHtml}</div>`);
 }
 
-window.deleteLog = async (logId, activityId) => {
+window.deleteLog = reporting("Could not delete the log entry", async (logId, activityId) => {
   if (!await hubConfirm({ message: "Delete this log entry?", confirmLabel: "Delete", destructive: true })) return;
   await db(`DELETE FROM app_home_maintenance__logs WHERE id = ?`, [logId]);
   // Refresh last log cache for this activity
@@ -387,7 +439,7 @@ window.deleteLog = async (logId, activityId) => {
   else delete lastLogs[activityId];
   await openHistoryModal(activityId);
   renderMain();
-};
+});
 
 // ─── Documents ────────────────────────────────────────────────────────────
 
@@ -417,7 +469,7 @@ async function uploadDocument(file) {
 
 async function deleteDocument(docId, fileKey) {
   if (!await hubConfirm({ message: "Delete this document?", confirmLabel: "Delete", destructive: true })) return;
-  await fetch(`${DOCS}/${docId}`, { method: "DELETE" });
+  await docsWrite(docId, { method: "DELETE" });
   if (fileKey) await files.delete(fileKey).catch(() => {});
   documents = documents.filter(d => d.id !== docId);
   renderMain();
@@ -431,9 +483,6 @@ async function saveItem(fields, id = null) {
     items = items.map(i => i.id === id ? { ...i, ...fields } : i);
   } else {
     const newId = crypto.randomUUID();
-    await db(`INSERT INTO app_home_maintenance__items (id, name, emoji, location, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [newId, fields.name, fields.emoji, fields.location, fields.notes, now]);
-    items = [...items, { id: newId, ...fields, created_at: now }];
-    if (!selectedId) selectedId = newId;
     // Seed defaults based on emoji/name heuristics
     const name = fields.name.toLowerCase();
     const defaults = [];
@@ -447,32 +496,51 @@ async function saveItem(fields, id = null) {
       defaults.push({ name: "Inspection", icon: "🔍", days: 180 });
       defaults.push({ name: "Service", icon: "🔧", days: 365 });
     }
-    for (let i = 0; i < defaults.length; i++) {
-      const aId = crypto.randomUUID();
-      await db(`INSERT INTO app_home_maintenance__activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [aId, newId, defaults[i].name, defaults[i].icon, defaults[i].days, i, now]);
-      activities = [...activities, { id: aId, item_id: newId, name: defaults[i].name, icon: defaults[i].icon, interval_days: defaults[i].days, sort_order: i, created_at: now }];
-    }
+    const seeded = defaults.map((d, i) => ({ id: crypto.randomUUID(), item_id: newId, name: d.name, icon: d.icon, interval_days: d.days, sort_order: i, created_at: now }));
+    // The item and its default tasks go in one batch, so a failure cannot
+    // leave an item with only some of them.
+    await dbBatch([
+      { sql: `INSERT INTO app_home_maintenance__items (id, name, emoji, location, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`, params: [newId, fields.name, fields.emoji, fields.location, fields.notes, now] },
+      ...seeded.map(a => ({
+        sql: `INSERT INTO app_home_maintenance__activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        params: [a.id, a.item_id, a.name, a.icon, a.interval_days, a.sort_order, a.created_at],
+      })),
+    ]);
+    items = [...items, { id: newId, ...fields, created_at: now }];
+    if (!selectedId) selectedId = newId;
+    activities = [...activities, ...seeded];
   }
 }
 
 async function deleteItem(id) {
   if (!await hubConfirm({ message: "Delete this item?", description: "All maintenance records will be permanently removed.", confirmLabel: "Delete item", destructive: true })) return false;
-  await db(`DELETE FROM app_home_maintenance__items WHERE id = ?`, [id]);
-  await db(`DELETE FROM app_home_maintenance__activities WHERE item_id = ?`, [id]);
-  await db(`DELETE FROM app_home_maintenance__logs WHERE item_id = ?`, [id]);
-  // Remove hub documents linked to this item (hub cascade deletes on app uninstall,
-  // but we clean up eagerly here too)
-  if (DOCS) {
-    const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(id)}`);
-    const docsToDelete = res.ok ? await res.json() : [];
-    for (const d of docsToDelete) {
-      await fetch(`${DOCS}/${d.id}`, { method: "DELETE" });
-      if (d.fileKey) await files.delete(d.fileKey).catch(() => {});
-    }
-  }
+  // One batch, so the item never goes without its tasks and logs.
+  await dbBatch([
+    { sql: `DELETE FROM app_home_maintenance__items WHERE id = ?`, params: [id] },
+    { sql: `DELETE FROM app_home_maintenance__activities WHERE item_id = ?`, params: [id] },
+    { sql: `DELETE FROM app_home_maintenance__logs WHERE item_id = ?`, params: [id] },
+  ]);
   items = items.filter(i => i.id !== id);
   activities = activities.filter(a => a.item_id !== id);
+  // Remove hub documents linked to this item (hub cascade deletes on app uninstall,
+  // but we clean up eagerly here too). The item is already gone, so a document
+  // that will not go is reported rather than failing the delete.
+  if (DOCS) {
+    let leftBehind = 0;
+    try {
+      const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(`Document request failed (${res.status})`);
+      for (const d of await res.json()) {
+        try {
+          await docsWrite(d.id, { method: "DELETE" });
+          if (d.fileKey) await files.delete(d.fileKey).catch(() => {});
+        } catch { leftBehind++; }
+      }
+    } catch { leftBehind = -1; }
+    if (leftBehind) hubAlert(leftBehind > 0
+      ? `The item was deleted, but ${leftBehind} of its documents could not be removed.`
+      : "The item was deleted, but its documents could not be removed.");
+  }
   if (selectedId === id) { selectedId = items[0]?.id ?? null; lastLogs = {}; documents = []; if (selectedId) { await loadLastLogs(); await loadDocuments(); } }
   return true;
 }
@@ -585,7 +653,9 @@ function renderDocsSection() {
     </div>
     <input type="file" id="file-input" style="display:none" onchange="handleFileSelect(this)" />` : "";
 
-  const emptyMsg = documents.length === 0
+  const emptyMsg = documentsUnread
+    ? `<div class="empty-sm" style="margin-bottom:10px">Couldn’t load the documents.</div>${docsHtml}`
+    : documents.length === 0
     ? `<div class="empty-sm" style="margin-bottom:10px">No documents yet${meIsAdmin ? " — upload warranty PDFs, manuals, receipts" : ""}.</div>`
     : filtered.length === 0
     ? `<div class="empty-sm" style="margin-bottom:10px">No documents match your search.</div>`
@@ -608,7 +678,11 @@ function renderMain() {
     ? `<div class="item-tabs">${items.map(i => `<button class="item-tab ${i.id === selectedId ? "active" : ""}" onclick="selectItem('${i.id}')">${esc(i.emoji)} ${esc(i.name)}</button>`).join("")}</div>` : "";
 
   let body = "";
-  if (items.length === 0) {
+  if (loadFailed) {
+    // Nothing is drawn under the banner: an empty list here would read as
+    // "there is nothing to maintain".
+    body = `<div class="load-error" data-testid="load-error" role="alert"><span>Couldn’t load your maintenance list.</span> <button type="button" class="load-error-retry" data-testid="load-retry" onclick="retryLoad()">Try again</button></div>`;
+  } else if (items.length === 0) {
     body = meIsAdmin ? `<div class="empty">No items yet. Tap ${glyph("gear")} to add your first item (car, HVAC, appliance…).</div>` : `<div class="empty">No maintenance items configured yet.</div>`;
   } else {
     const cardGrid = curActs.length === 0
@@ -622,7 +696,7 @@ function renderMain() {
       <div><h1>${item ? `${esc(item.emoji)} ${esc(item.name)}` : `${glyph("wrench")} Home Maintenance`}</h1><div class="sub">${item?.location ? esc(item.location) : "Maintenance tracker"}</div></div>
       ${meIsAdmin ? `<button class="btn btn-icon" onclick="openSettings()" title="Settings" aria-label="Settings">${glyph("gear", { accent: "currentColor" })}</button>` : ""}
     </header>
-    ${tabsHtml}${body}`;
+    ${loadFailed ? "" : tabsHtml}${body}`;
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────
@@ -660,8 +734,8 @@ function renderSettingsModal() {
     <div style="margin-top:14px"><button class="btn btn-primary btn-sm" onclick="openItemForm()">+ Add Item</button></div>`);
 }
 
-window.doDelItem    = async id => { if (await deleteItem(id)) { renderSettingsModal(); renderMain(); } };
-window.doDelAct     = async id => { if (await deleteActivity(id)) { renderSettingsModal(); renderMain(); } };
+window.doDelItem    = reporting("Could not delete the item", async id => { if (await deleteItem(id)) { renderSettingsModal(); renderMain(); } });
+window.doDelAct     = reporting("Could not delete the activity", async id => { if (await deleteActivity(id)) { renderSettingsModal(); renderMain(); } });
 window.openSettings = () => renderSettingsModal();
 
 // ─── Item form ────────────────────────────────────────────────────────────
@@ -684,8 +758,15 @@ window.submitItem = async id => {
   const name = document.getElementById("if-name").value.trim();
   if (!name) { document.getElementById("if-name").focus(); return; }
   const btn = modalEl?.querySelector('.modal-actions .btn-primary');
+  const label = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-  await saveItem({ name, emoji: document.getElementById("if-emoji").value, location: document.getElementById("if-loc").value.trim(), notes: document.getElementById("if-notes").value.trim() }, id || null);
+  try {
+    await saveItem({ name, emoji: document.getElementById("if-emoji").value, location: document.getElementById("if-loc").value.trim(), notes: document.getElementById("if-notes").value.trim() }, id || null);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    hubAlert(`Could not save the item: ${e.message}`);
+    return;
+  }
   renderSettingsModal(); renderMain();
 };
 
@@ -727,11 +808,19 @@ window.submitAct = async id => {
   const days   = preset === "custom" ? parseInt(document.getElementById("af-days").value) || 90 : parseInt(preset);
   if (!name) { document.getElementById("af-name").focus(); return; }
   const btn = modalEl?.querySelector('.modal-actions .btn-primary');
+  const label = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const lastDoneVal = document.getElementById("af-lastdone")?.value;
   const lastDoneAt  = localDateToISO(lastDoneVal);
-  await saveActivity({ name, icon: document.getElementById("af-icon").value, interval_days: days, lastDoneAt }, id || null);
-  await loadLastLogs(); renderSettingsModal(); renderMain();
+  try {
+    await saveActivity({ name, icon: document.getElementById("af-icon").value, interval_days: days, lastDoneAt }, id || null);
+    await loadLastLogs();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    hubAlert(`Could not save the task: ${e.message}`);
+    return;
+  }
+  renderSettingsModal(); renderMain();
 };
 
 // ─── Document upload ──────────────────────────────────────────────────────
@@ -743,7 +832,7 @@ window.handleDrop = e => {
   const f = e.dataTransfer.files[0];
   if (f) uploadDocument(f);
 };
-window.doDelDoc = deleteDocument;
+window.doDelDoc = reporting("Could not delete the document", deleteDocument);
 
 window.setDocSearch = function(v) { docSearch = v; renderMain(); };
 
@@ -780,7 +869,13 @@ window.renameDoc = async function(id) {
     if (!name) return;
     const btn = document.getElementById("rename-doc-save-btn");
     btn.disabled = true; btn.textContent = "Saving…";
-    await fetch(`${DOCS}/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: name }) });
+    try {
+      await docsWrite(id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: name }) });
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "Save";
+      hubAlert(`Could not rename the file: ${e.message}`);
+      return;
+    }
     documents = documents.map(d => d.id === id ? { ...d, title: name } : d);
     el.remove();
     renderMain();
@@ -789,10 +884,10 @@ window.renameDoc = async function(id) {
 
 window.backToSettings = renderSettingsModal;
 window.openItemForm   = openItemForm;
-window.openActForm    = openActForm;
+window.openActForm    = reporting("Could not open the task", openActForm);
 window.closeModal     = closeModal;
 window.markDone       = markDone;
-window.openHistory    = openHistoryModal;
+window.openHistory    = reporting("Could not load the history", openHistoryModal);
 window.selectItem = async id => {
   selectedId = id;
   documents = [];
@@ -808,16 +903,31 @@ function handleDeepLink() {
   if (item) window.selectItem(itemId);
 }
 
-(async () => {
-  await loadMembers();
-  if (DB) {
-    await initDb();
+// Reads the whole list. A failed read leaves `loadFailed` set, and the page
+// draws a banner in place of the list until a read succeeds.
+async function loadAll() {
+  if (!DB) { await loadMembers(); return; }
+  try {
+    await Promise.all([loadMembers(), initDb()]);
     await Promise.all([loadItems(), loadActivities()]);
-    if (items.length > 0) selectedId = items[0].id;
+    if (items.length > 0 && !items.some(i => i.id === selectedId)) selectedId = items[0].id;
     await Promise.all([loadLastLogs(), loadDocuments()]);
+    loadFailed = false;
+  } catch {
+    loadFailed = true;
   }
+}
+
+window.retryLoad = async () => {
+  await loadAll();
   renderMain();
-  handleDeepLink();
+  if (!loadFailed) handleDeepLink();
+};
+
+(async () => {
+  await loadAll();
+  renderMain();
+  if (!loadFailed) handleDeepLink();
   refreshTimer = setInterval(() => { if (!modalEl) renderMain(); }, 60_000);
 })();
 </script>
