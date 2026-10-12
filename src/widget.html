@@ -63,14 +63,16 @@
       align-items: center; justify-content: center;
       color: #9ca3af; font-size: 12px; gap: 6px;
     }
+    .load-error { margin: 8px; padding: 8px 10px; border-radius: 10px; background: var(--hub-tint-danger, #fee2e2); color: var(--hub-tint-danger-fg, #b91c1c); font-size: 0.8rem; }
   </style>
 </head>
 <body>
 <script type="module">
-import { glyph } from "/hub-sdk.js";
+import { glyph, isAdult } from "/hub-sdk.js";
 
 const DB     = window.__DB_URL ?? "";
 const APP_ID = "home-maintenance";
+const ME     = window.__CURRENT_MEMBER ?? null;
 
 function esc(s) {
   return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -183,7 +185,10 @@ async function load() {
 }
 
 load().catch(() => {
-  document.body.innerHTML = `<div class="empty"><a href="/open/${APP_ID}" style="color:#111827;font-weight:600">Open Home Maintenance →</a></div>`;
+  // Every table here is adults-only, so the hub refuses a child's read: that is
+  // not an outage and keeps the plain link. Anyone else is told the read failed.
+  const refused = ME && !isAdult(ME);
+  document.body.innerHTML = `${refused ? "" : `<div class="load-error" data-testid="load-error" role="alert">Couldn’t load the maintenance list.</div>`}<div class="empty"><a href="/open/${APP_ID}" style="color:#111827;font-weight:600">Open Home Maintenance →</a></div>`;
 });
 </script>
 </body>
