@@ -450,8 +450,20 @@ async function uploadDocument(file) {
   const area = document.getElementById("upload-area");
   if (area) { area.textContent = "⏳ Uploading…"; area.classList.add("uploading"); }
 
+  let data = null;
   try {
-    const data = await files.upload(file);
+    data = await files.upload(file);
+  } catch (err) {
+    // A file the hub would not take (too large, a type it does not store, no
+    // storage left) is said in the hub's words; any other failure is not.
+    const refused = err?.status === 507 || (err?.status >= 400 && err?.status < 500);
+    if (refused && err.detail?.error) hubAlert("Upload failed: " + err.detail.error);
+    else { console.error(err); hubAlert("Couldn’t upload the document — try again."); }
+    renderMain();
+    return;
+  }
+  let refused = false;
+  try {
     const res  = await fetch(DOCS, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -460,11 +472,22 @@ async function uploadDocument(file) {
         sourceId: selectedId,
       }),
     });
-    const { id: docId } = await res.json();
-    documents = [{ id: docId, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: selectedId, createdAt: new Date().toISOString() }, ...documents];
+    refused = res.status === 507 || (res.status >= 400 && res.status < 500);
+    const json = await res.json().catch(() => null);
+    // The hub refusing the record is not a document added: without this check
+    // a row with no id was listed as though it had been.
+    if (!res.ok || !json?.id) throw new Error(json?.error || `Document request failed (${res.status})`);
+    documents = [{ id: json.id, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: selectedId, createdAt: new Date().toISOString() }, ...documents];
     renderMain();
   } catch (err) {
-    hubAlert("Upload failed: " + err.message);
+    console.error(err);
+    hubAlert("Couldn’t add the document — try again.");
+    // The hub said no, so the file went up but nothing lists it: drop it
+    // rather than leave it taking up storage where nobody can see or delete
+    // it. With no answer the record may exist, so the file stays and the list
+    // is read again.
+    if (refused) files.delete(data.id).catch(() => {});
+    else await loadDocuments();
     renderMain();
   }
 }
