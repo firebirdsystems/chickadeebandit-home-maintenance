@@ -326,14 +326,18 @@ async function loadLastLogs() {
 }
 async function loadDocuments() {
   documentsUnread = false;
-  if (!selectedId || !DOCS) { documents = []; return; }
+  // The item this read is for: an answer that arrives after another item was
+  // picked belongs to neither the list nor the notice now on screen.
+  const itemId = selectedId;
+  if (!itemId || !DOCS) { documents = []; return; }
   // Optional to the page: a failed read is said in the Documents section, not by the banner.
   try {
-    const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(selectedId)}`);
+    const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(itemId)}`);
     const list = res.ok ? await res.json() : null;
     if (!Array.isArray(list)) throw new Error("documents unavailable");
+    if (selectedId !== itemId) return;
     documents = list;
-  } catch { documents = []; documentsUnread = true; }
+  } catch { if (selectedId !== itemId) return; documents = []; documentsUnread = true; }
 }
 
 // ─── Status ───────────────────────────────────────────────────────────────
@@ -447,6 +451,8 @@ window.deleteLog = reporting("Couldn’t delete the log entry — try again.", a
 
 async function uploadDocument(file) {
   if (!DOCS || !ME) return;
+  // The item the file was chosen for; another may be picked before the upload ends.
+  const itemId = selectedId;
   const area = document.getElementById("upload-area");
   if (area) { area.textContent = "⏳ Uploading…"; area.classList.add("uploading"); }
 
@@ -469,7 +475,7 @@ async function uploadDocument(file) {
       body: JSON.stringify({
         title: file.name, category: "home", sharedWith: ["adults"],
         fileKey: data.id, mimeType: file.type, sizeBytes: file.size,
-        sourceId: selectedId,
+        sourceId: itemId,
       }),
     });
     refused = res.status === 507 || (res.status >= 400 && res.status < 500);
@@ -477,7 +483,7 @@ async function uploadDocument(file) {
     // The hub refusing the record is not a document added: without this check
     // a row with no id was listed as though it had been.
     if (!res.ok || !json?.id) throw new Error(json?.error || `Document request failed (${res.status})`);
-    documents = [{ id: json.id, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: selectedId, createdAt: new Date().toISOString() }, ...documents];
+    if (selectedId === itemId) documents = [{ id: json.id, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: itemId, createdAt: new Date().toISOString() }, ...documents.filter(d => d.id !== json.id)];
     renderMain();
   } catch (err) {
     console.error(err);
