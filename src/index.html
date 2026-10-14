@@ -235,6 +235,7 @@ let activities   = [];    // all tasks across all items
 let lastLogs     = {};    // activityId → most recent log
 let documents    = [];    // documents for selected item
 let documentsUnread = false; // the selected item's documents could not be read: unknown, not none
+let documentsRead = 0;       // counts document reads, so an answer overtaken by a later read is dropped
 let selectedId   = null;
 let actFormItemId = null; // item context for the open activity form
 let refreshTimer  = null;
@@ -329,15 +330,18 @@ async function loadDocuments() {
   // The item this read is for: an answer that arrives after another item was
   // picked belongs to neither the list nor the notice now on screen.
   const itemId = selectedId;
+  // Only the newest read may draw: an older answer for the same item (picked,
+  // left, picked again) would otherwise replace a newer one.
+  const read = ++documentsRead;
   if (!itemId || !DOCS) { documents = []; return; }
   // Optional to the page: a failed read is said in the Documents section, not by the banner.
   try {
     const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(itemId)}`);
     const list = res.ok ? await res.json() : null;
     if (!Array.isArray(list)) throw new Error("documents unavailable");
-    if (selectedId !== itemId) return;
+    if (selectedId !== itemId || read !== documentsRead) return;
     documents = list;
-  } catch { if (selectedId !== itemId) return; documents = []; documentsUnread = true; }
+  } catch { if (selectedId !== itemId || read !== documentsRead) return; documents = []; documentsUnread = true; }
 }
 
 // ─── Status ───────────────────────────────────────────────────────────────
@@ -468,6 +472,9 @@ async function uploadDocument(file) {
     renderMain();
     return;
   }
+  // The item was deleted while the file went up: no record has been made and
+  // nothing would list one, so the file is dropped instead.
+  if (!items.some(i => i.id === itemId)) { files.delete(data.id).catch(() => {}); renderMain(); return; }
   let refused = false;
   try {
     const res  = await fetch(DOCS, {
@@ -483,7 +490,10 @@ async function uploadDocument(file) {
     // The hub refusing the record is not a document added: without this check
     // a row with no id was listed as though it had been.
     if (!res.ok || !json?.id) throw new Error(json?.error || `Document request failed (${res.status})`);
-    if (selectedId === itemId) documents = [{ id: json.id, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: itemId, createdAt: new Date().toISOString() }, ...documents.filter(d => d.id !== json.id)];
+    // Deleted while the record was being made: the item's documents were
+    // already cleared, so this one goes with them.
+    if (!items.some(i => i.id === itemId)) docsWrite(json.id, { method: "DELETE" }).then(() => files.delete(data.id)).catch(() => {});
+    else if (selectedId === itemId) documents = [{ id: json.id, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: itemId, createdAt: new Date().toISOString() }, ...documents.filter(d => d.id !== json.id)];
     renderMain();
   } catch (err) {
     console.error(err);
