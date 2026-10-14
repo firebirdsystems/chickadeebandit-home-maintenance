@@ -204,7 +204,7 @@ import {
   fmtDate, fmtDateTime,
   statusColor, formatBytes, docGlyph,
   activityStatusFromLog,
-  localDateToISO, isoToLocalDateInput, searchableFields,
+  localDateToISO, isoToLocalDateInput, searchableFields, failureLine, outcomeUnknown,
 } from "./logic.js";
 
 const CONTEXT = window.__CONTEXT_URL ?? "";
@@ -254,8 +254,17 @@ async function db(sql, params = []) {
   // (403 row policy, 400 bad statement, 507 over quota). fetch() does not
   // reject on those, so without this throw every caller's rollback and
   // error toast below is unreachable code.
-  if (!res.ok || !json || typeof json !== "object" || json.error) throw new Error(json?.error || `Database request failed (${res.status})`);
+  if (!res.ok || !json || typeof json !== "object" || json.error) throw Object.assign(new Error(json?.error || `Database request failed (${res.status})`), { status: res.status, code: json?.code });
   return json;
+}
+
+// A write the hub answered with zero rows changed nothing: re-read the row.
+// Gone: removed. Still there: the row policy kept this plain `WHERE id = ?`
+// write from this member, the permission line. The read failed: unknown.
+async function unchangedError(table, id, words) {
+  let found = null;
+  try { found = !!(await db(`SELECT id FROM ${table} WHERE id = ?`, [id])).rows?.[0]; } catch (e) { console.error(e); }
+  return Object.assign(new Error(failureLine(null, { ...words, found })), { forUser: true });
 }
 
 // Several statements in one transaction: all of them land or none does.
@@ -263,7 +272,7 @@ async function dbBatch(statements) {
   if (!DB) return statements.map(() => ({ rows: [], changed: 0 }));
   const res = await fetch(DB, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statements }) });
   const json = await res.json().catch(() => null);
-  if (!res.ok || !json || typeof json !== "object" || json.error) throw new Error(json?.error || `Database request failed (${res.status})`);
+  if (!res.ok || !json || typeof json !== "object" || json.error) throw Object.assign(new Error(json?.error || `Database request failed (${res.status})`), { status: res.status, code: json?.code });
   return json.results;
 }
 
@@ -272,18 +281,20 @@ async function docsWrite(docId, init) {
   const res = await fetch(`${DOCS}/${docId}`, init);
   if (res.ok) return;
   const json = await res.json().catch(() => ({}));
-  throw new Error(json.error || `Document request failed (${res.status})`);
+  throw Object.assign(new Error(json.error || `Document request failed (${res.status})`), { status: res.status, code: json.code });
 }
 
 // Runs a member's action and tells them when it fails, so a refused request is
-// not left as an unhandled rejection nobody sees.
-function reporting(what, fn) {
+// not left as an unhandled rejection nobody sees. `words` name the action for
+// `failureLine`: the hub's text stays in the console.
+function reporting(words, fn) {
   return async (...args) => {
     try {
       return await fn(...args);
     } catch (e) {
       console.error(e);
-      hubAlert(what);
+      // A read passes its own fixed line ("Couldn’t load …"); a write passes words.
+      hubAlert(typeof words === "string" ? words : failureLine(e, words));
     }
   };
 }
@@ -373,7 +384,7 @@ async function saveLog(activityId, notes) {
     if (prev) lastLogs[activityId] = prev; else delete lastLogs[activityId];
     renderMain();
     console.error(e);
-    hubAlert("Couldn’t save the log entry — try again.");
+    hubAlert(failureLine(e, { action: "save the log entry", thing: "log entry" }));
     return;
   }
   publishEvent("maintenance.activity_logged", id, {
@@ -440,9 +451,10 @@ async function openHistoryModal(activityId) {
     <div class="history-list">${historyHtml}</div>`);
 }
 
-window.deleteLog = reporting("Couldn’t delete the log entry — try again.", async (logId, activityId) => {
+window.deleteLog = reporting({ action: "delete the log entry", thing: "log entry" }, async (logId, activityId) => {
   if (!await hubConfirm({ message: "Delete this log entry?", confirmLabel: "Delete", destructive: true })) return;
-  await db(`DELETE FROM app_home_maintenance__logs WHERE id = ?`, [logId]);
+  const res = await db(`DELETE FROM app_home_maintenance__logs WHERE id = ?`, [logId]);
+  if (res?.changed === 0) throw await unchangedError("app_home_maintenance__logs", logId, { action: "delete the log entry", thing: "log entry" });
   // Refresh last log cache for this activity
   const { rows } = await db(`SELECT * FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [activityId]);
   if (rows?.length) lastLogs[activityId] = rows[0];
@@ -453,28 +465,63 @@ window.deleteLog = reporting("Couldn’t delete the log entry — try again.", a
 
 // ─── Documents ────────────────────────────────────────────────────────────
 
+// The upload behind a document whose save had no clear answer: the document
+// may be stored and name it. Sending the same file to the same item again
+// reuses it, after first looking for a document that landed; it is never
+// deleted on that unknown outcome. The hub mints a document's id, so the file
+// is what finds it.
+let pendingDoc = null; // { key, fileKey }
+
+/** The item's document naming this upload, or null. Throws when unread. */
+async function landedDoc(itemId, fileKey) {
+  const res = await fetch(`${DOCS}?sourceId=${encodeURIComponent(itemId)}`);
+  const list = res.ok ? await res.json() : null;
+  if (!Array.isArray(list)) throw new Error(`Document request failed (${res.status})`);
+  return list.find(d => d.fileKey === fileKey) ?? null;
+}
+
 async function uploadDocument(file) {
   if (!DOCS || !ME) return;
   // The item the file was chosen for; another may be picked before the upload ends.
   const itemId = selectedId;
   const area = document.getElementById("upload-area");
   if (area) { area.textContent = "⏳ Uploading…"; area.classList.add("uploading"); }
+  const key = [itemId, file.name, file.size, file.lastModified].join("\n");
+  // Another file, or another item: the earlier upload is left as it is.
+  if (pendingDoc && pendingDoc.key !== key) pendingDoc = null;
+  const showLanded = (doc) => {
+    pendingDoc = null;
+    if (selectedId === itemId) documents = [doc, ...documents.filter(d => d.id !== doc.id)];
+    renderMain();
+  };
 
   let data = null;
-  try {
-    data = await files.upload(file);
-  } catch (err) {
-    // A file the hub would not take (too large, a type it does not store, no
-    // storage left) is said in the hub's words; any other failure is not.
-    const refused = err?.status === 507 || (err?.status >= 400 && err?.status < 500);
-    if (refused && err.detail?.error) hubAlert("Upload failed: " + err.detail.error);
-    else { console.error(err); hubAlert("Couldn’t upload the document — try again."); }
-    renderMain();
-    return;
+  if (pendingDoc) {
+    // An earlier try's answer was lost: if its document landed, that is the
+    // one, shown once; never a second document naming the same file.
+    data = { id: pendingDoc.fileKey };
+    let doc = null;
+    try { doc = await landedDoc(itemId, data.id); }
+    catch (err) { console.error(err); hubAlert("Couldn’t add the document — try again."); renderMain(); return; }
+    if (doc) return showLanded(doc);
+  } else {
+    try {
+      data = await files.upload(file);
+    } catch (err) {
+      // A file the hub would not take (too large, a type it does not store, no
+      // storage left) gets a line of its own; never the hub's words.
+      console.error(err);
+      hubAlert(err?.status === 413 ? "That file is too large."
+        : err?.status === 415 ? "That kind of file can’t be uploaded."
+        : failureLine(err, { action: "upload the document", thing: "document" }));
+      renderMain();
+      return;
+    }
+    pendingDoc = { key, fileKey: data.id };
   }
   // The item was deleted while the file went up: no record has been made and
   // nothing would list one, so the file is dropped instead.
-  if (!items.some(i => i.id === itemId)) { files.delete(data.id).catch(() => {}); renderMain(); return; }
+  if (!items.some(i => i.id === itemId)) { pendingDoc = null; files.delete(data.id).catch(() => {}); renderMain(); return; }
   let refused = false;
   try {
     const res  = await fetch(DOCS, {
@@ -485,11 +532,14 @@ async function uploadDocument(file) {
         sourceId: itemId,
       }),
     });
-    refused = res.status === 507 || (res.status >= 400 && res.status < 500);
+    // Refused before anything was stored: a 4xx other than 400 (a 400 may be a
+    // write that timed out after it was stored), or 507 over the storage limit.
+    refused = res.status === 507 || (res.status > 400 && res.status < 500);
     const json = await res.json().catch(() => null);
     // The hub refusing the record is not a document added: without this check
     // a row with no id was listed as though it had been.
-    if (!res.ok || !json?.id) throw new Error(json?.error || `Document request failed (${res.status})`);
+    if (!res.ok || !json?.id) throw Object.assign(new Error(json?.error || `Document request failed (${res.status})`), { status: res.status, code: json?.code });
+    pendingDoc = null;
     // Deleted while the record was being made: the item's documents were
     // already cleared, so this one goes with them.
     if (!items.some(i => i.id === itemId)) docsWrite(json.id, { method: "DELETE" }).then(() => files.delete(data.id)).catch(() => {});
@@ -497,13 +547,19 @@ async function uploadDocument(file) {
     renderMain();
   } catch (err) {
     console.error(err);
-    hubAlert("Couldn’t add the document — try again.");
     // The hub said no, so the file went up but nothing lists it: drop it
     // rather than leave it taking up storage where nobody can see or delete
-    // it. With no answer the record may exist, so the file stays and the list
-    // is read again.
-    if (refused) files.delete(data.id).catch(() => {});
-    else await loadDocuments();
+    // it. With no answer the record may exist, so the file stays (pending for
+    // the next try) and the document is looked for: found, it is shown once.
+    if (refused) {
+      pendingDoc = null;
+      files.delete(data.id).catch(() => {});
+    } else if (pendingDoc?.key === key) {
+      const doc = await landedDoc(itemId, data.id).catch((readErr) => { console.error(readErr); return null; });
+      if (doc) return showLanded(doc);
+    }
+    hubAlert(failureLine(err, { action: "add the document", thing: "document" }));
+    if (!refused) await loadDocuments();
     renderMain();
   }
 }
@@ -520,7 +576,8 @@ async function deleteDocument(docId, fileKey) {
 async function saveItem(fields, id = null) {
   const now = new Date().toISOString();
   if (id) {
-    await db(`UPDATE app_home_maintenance__items SET name = ?, emoji = ?, location = ?, notes = ? WHERE id = ?`, [fields.name, fields.emoji, fields.location, fields.notes, id]);
+    const res = await db(`UPDATE app_home_maintenance__items SET name = ?, emoji = ?, location = ?, notes = ? WHERE id = ?`, [fields.name, fields.emoji, fields.location, fields.notes, id]);
+    if (res?.changed === 0) throw await unchangedError("app_home_maintenance__items", id, { action: "save the item", thing: "item" });
     items = items.map(i => i.id === id ? { ...i, ...fields } : i);
   } else {
     const newId = crypto.randomUUID();
@@ -586,11 +643,15 @@ async function deleteItem(id) {
   return true;
 }
 
-async function saveActivity(fields, id = null) {
+// `pins` is the open form's dataset: the new task's id and its log's id are
+// minted once per form, so a retry after a lost answer finds the first try's
+// rows instead of storing the task twice.
+async function saveActivity(fields, id = null, pins = {}) {
   const now = new Date().toISOString();
   const itemId = actFormItemId ?? selectedId;
   if (id) {
-    await db(`UPDATE app_home_maintenance__activities SET name = ?, icon = ?, interval_days = ? WHERE id = ?`, [fields.name, fields.icon, fields.interval_days, id]);
+    const res = await db(`UPDATE app_home_maintenance__activities SET name = ?, icon = ?, interval_days = ? WHERE id = ?`, [fields.name, fields.icon, fields.interval_days, id]);
+    if (res?.changed === 0) throw await unchangedError("app_home_maintenance__activities", id, { action: "save the task", thing: "task" });
     activities = activities.map(a => a.id === id ? { ...a, ...fields } : a);
     if (fields.lastDoneAt) {
       const { rows } = await db(`SELECT id FROM app_home_maintenance__logs WHERE activity_id = ? ORDER BY done_at DESC LIMIT 1`, [id]);
@@ -598,23 +659,39 @@ async function saveActivity(fields, id = null) {
       if (existing) {
         await db(`UPDATE app_home_maintenance__logs SET done_at = ? WHERE id = ?`, [fields.lastDoneAt, existing]);
       } else {
-        const logId = crypto.randomUUID();
+        const logId = (pins.logId ||= crypto.randomUUID());
         await db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [logId, id, itemId, ME.id, fields.lastDoneAt, "", now]);
       }
     }
   } else {
-    const newId = crypto.randomUUID();
+    const newId = (pins.actId ||= crypto.randomUUID());
+    const logId = fields.lastDoneAt ? (pins.logId ||= crypto.randomUUID()) : null;
     const sortOrder = activities.filter(a => a.item_id === itemId).length;
-    await db(`INSERT INTO app_home_maintenance__activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [newId, itemId, fields.name, fields.icon, fields.interval_days, sortOrder, now]);
-    activities = [...activities, { id: newId, item_id: itemId, ...fields }];
-    if (fields.lastDoneAt) {
-      const logId = crypto.randomUUID();
-      await db(`INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [logId, newId, itemId, ME.id, fields.lastDoneAt, "", now]);
-      lastLogs[newId] = { id: logId, activity_id: newId, item_id: itemId, done_by: ME.id, done_at: fields.lastDoneAt, notes: "" };
+    // The task and its first log go in one batch: both land or neither does.
+    try {
+      await dbBatch([
+        { sql: `INSERT INTO app_home_maintenance__activities (id, item_id, name, icon, interval_days, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          params: [newId, itemId, fields.name, fields.icon, fields.interval_days, sortOrder, now] },
+        ...(logId ? [{ sql: `INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          params: [logId, newId, itemId, ME.id, fields.lastDoneAt, "", now] }] : []),
+      ]);
+    } catch (e) {
+      // Unknown outcome: read the task back by its pinned id. Found means an
+      // earlier try landed; what the form holds now is saved over it as an
+      // ordinary edit. Not found: the add fails, the ids stay pinned. The id is
+      // ours, so a failed read leaves the outcome unknown (the generic line,
+      // never "already exists").
+      if (!outcomeUnknown(e)) throw e;
+      let stored = null;
+      try { stored = (await db(`SELECT * FROM app_home_maintenance__activities WHERE id = ?`, [newId])).rows?.[0] ?? null; }
+      catch (readErr) { console.error(readErr); throw new Error("task read-back failed", { cause: e }); }
+      if (!stored) throw e;
+      activities = [...activities.filter(a => a.id !== newId), { ...stored }];
+      return saveActivity(fields, newId, pins);
     }
+    activities = [...activities, { id: newId, item_id: itemId, ...fields }];
+    if (logId) lastLogs[newId] = { id: logId, activity_id: newId, item_id: itemId, done_by: ME.id, done_at: fields.lastDoneAt, notes: "" };
   }
 }
 
@@ -775,8 +852,8 @@ function renderSettingsModal() {
     <div style="margin-top:14px"><button class="btn btn-primary btn-sm" onclick="openItemForm()">+ Add Item</button></div>`);
 }
 
-window.doDelItem    = reporting("Couldn’t delete the item — try again.", async id => { if (await deleteItem(id)) { renderSettingsModal(); renderMain(); } });
-window.doDelAct     = reporting("Couldn’t delete the activity — try again.", async id => { if (await deleteActivity(id)) { renderSettingsModal(); renderMain(); } });
+window.doDelItem    = reporting({ action: "delete the item", thing: "item" }, async id => { if (await deleteItem(id)) { renderSettingsModal(); renderMain(); } });
+window.doDelAct     = reporting({ action: "delete the activity", thing: "activity" }, async id => { if (await deleteActivity(id)) { renderSettingsModal(); renderMain(); } });
 window.openSettings = () => renderSettingsModal();
 
 // ─── Item form ────────────────────────────────────────────────────────────
@@ -806,7 +883,7 @@ window.submitItem = async id => {
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = label; }
     console.error(e);
-    hubAlert("Couldn’t save the item — try again.");
+    hubAlert(failureLine(e, { action: id ? "save the item" : "add the item", thing: "item" }));
     return;
   }
   renderSettingsModal(); renderMain();
@@ -854,15 +931,19 @@ window.submitAct = async id => {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const lastDoneVal = document.getElementById("af-lastdone")?.value;
   const lastDoneAt  = localDateToISO(lastDoneVal);
+  const pins = modalEl?.dataset ?? {};
   try {
-    await saveActivity({ name, icon: document.getElementById("af-icon").value, interval_days: days, lastDoneAt }, id || null);
-    await loadLastLogs();
+    await saveActivity({ name, icon: document.getElementById("af-icon").value, interval_days: days, lastDoneAt }, id || null, pins);
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = label; }
     console.error(e);
-    hubAlert("Couldn’t save the task — try again.");
+    hubAlert(failureLine(e, { action: id ? "save the task" : "add the task", thing: "task" }));
     return;
   }
+  delete pins.actId; delete pins.logId;
+  // The task is stored: a failed refresh must not read as a failed save, or
+  // adding it again would store it twice.
+  try { await loadLastLogs(); } catch (e) { console.error(e); }
   renderSettingsModal(); renderMain();
 };
 
@@ -875,7 +956,7 @@ window.handleDrop = e => {
   const f = e.dataTransfer.files[0];
   if (f) uploadDocument(f);
 };
-window.doDelDoc = reporting("Couldn’t delete the document — try again.", deleteDocument);
+window.doDelDoc = reporting({ action: "delete the document", thing: "document" }, deleteDocument);
 
 window.setDocSearch = function(v) { docSearch = v; renderMain(); };
 
@@ -917,7 +998,7 @@ window.renameDoc = async function(id) {
     } catch (e) {
       btn.disabled = false; btn.textContent = "Save";
       console.error(e);
-      hubAlert("Couldn’t rename the file — try again.");
+      hubAlert(failureLine(e, { action: "rename the file", thing: "file" }));
       return;
     }
     documents = documents.map(d => d.id === id ? { ...d, title: name } : d);
