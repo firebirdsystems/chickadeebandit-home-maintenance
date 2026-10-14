@@ -141,6 +141,62 @@
           }
         }
       ]
+    },
+    {
+      "name": "in a shared space every adult co-owner sets up and logs maintenance; a granted guest can neither read nor write it",
+      "context": "shared_space",
+      "members": { "steward": "admin", "coowner": "adult", "guest": "guest" },
+      "granted": ["guest"],
+      "steps": [
+        {
+          "action": "db",
+          "as": "steward",
+          "sql": "INSERT INTO app_home_maintenance__items (id, name, location, created_at) VALUES (?, ?, ?, ?)",
+          "params": ["i1", "Well pump", "Crawlspace", "2026-01-01T00:00:00Z"],
+          "expect": { "status": 200 }
+        },
+        {
+          "action": "db",
+          "as": "coowner",
+          "sql": "INSERT INTO app_home_maintenance__activities (id, item_id, name, interval_days, created_at) VALUES (?, ?, ?, 365, ?)",
+          "params": ["a1", "i1", "Annual service", "2026-01-01T00:00:00Z"],
+          "expect": { "status": 200 }
+        },
+        {
+          "action": "db",
+          "as": "coowner",
+          "sql": "INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          "params": ["l1", "a1", "i1", "{{coowner}}", "2026-01-02T00:00:00Z", "2026-01-02T00:00:00Z"],
+          "expect": { "status": 200 }
+        },
+        {
+          "action": "db",
+          "as": "steward",
+          "sql": "SELECT id FROM app_home_maintenance__logs",
+          "expect": { "status": 200, "rowCount": 1, "rowsContain": [{ "id": "l1" }] }
+        },
+        {
+          "action": "db",
+          "as": "guest",
+          "sql": "SELECT id FROM app_home_maintenance__items",
+          "expect": { "status": 403 }
+        },
+        {
+          "action": "db",
+          "as": "guest",
+          "sql": "INSERT INTO app_home_maintenance__logs (id, activity_id, item_id, done_by, done_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          "params": ["l2", "a1", "i1", "{{guest}}", "2026-01-03T00:00:00Z", "2026-01-03T00:00:00Z"],
+          "expect": { "status": 403 }
+        },
+        {
+          "action": "publish",
+          "as": "coowner",
+          "type": "maintenance.activity_logged",
+          "subject_id": "a1",
+          "payload": { "item": "Well pump", "activity": "Annual service" },
+          "expect": { "status": 201 }
+        }
+      ]
     }
   ]
 }

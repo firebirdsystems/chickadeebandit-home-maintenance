@@ -27,6 +27,7 @@
     "default_audience": "adults",
     "requires_approval": false
   },
+  "contexts": ["household", "shared_space"],
   "storage": "db",
   "preload": {
     "items": {"sql": "SELECT * FROM app_home_maintenance__items ORDER BY created_at"},
