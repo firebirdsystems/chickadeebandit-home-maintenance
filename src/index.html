@@ -521,7 +521,7 @@ async function uploadDocument(file) {
   }
   // The item was deleted while the file went up: no record has been made and
   // nothing would list one, so the file is dropped instead.
-  if (!items.some(i => i.id === itemId)) { pendingDoc = null; files.delete(data.id).catch(() => {}); renderMain(); return; }
+  if (await itemGone(itemId)) { pendingDoc = null; files.delete(data.id).catch(() => {}); renderMain(); return; }
   let refused = false;
   try {
     const res  = await fetch(DOCS, {
@@ -542,7 +542,7 @@ async function uploadDocument(file) {
     pendingDoc = null;
     // Deleted while the record was being made: the item's documents were
     // already cleared, so this one goes with them.
-    if (!items.some(i => i.id === itemId)) docsWrite(json.id, { method: "DELETE" }).then(() => files.delete(data.id)).catch(() => {});
+    if (await itemGone(itemId)) docsWrite(json.id, { method: "DELETE" }).then(() => files.delete(data.id)).catch(() => {});
     else if (selectedId === itemId) documents = [{ id: json.id, title: file.name, fileKey: data.id, mimeType: file.type, sizeBytes: file.size, sourceId: itemId, createdAt: new Date().toISOString() }, ...documents.filter(d => d.id !== json.id)];
     renderMain();
   } catch (err) {
@@ -562,6 +562,18 @@ async function uploadDocument(file) {
     if (!refused) await loadDocuments();
     renderMain();
   }
+}
+
+/** Whether an item is deleted: missing from the page's list AND from the hub.
+ *  The list alone is only what this tab last read; a read that fails says
+ *  nothing, so the item counts as still there and nothing is discarded. */
+async function itemGone(itemId) {
+  if (items.some(i => i.id === itemId)) return false;
+  if (!DB) return true;
+  try {
+    const { rows } = await db(`SELECT id FROM app_home_maintenance__items WHERE id = ?`, [itemId]);
+    return rows.length === 0;
+  } catch (e) { console.error(e); return false; }
 }
 
 async function deleteDocument(docId, fileKey) {
