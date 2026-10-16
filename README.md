@@ -6,7 +6,7 @@ Track recurring maintenance tasks — car oil changes, HVAC filters, appliance s
 
 ## Features
 
-- Define tasks with custom recurrence intervals (e.g. every 3 months, every 5 000 miles)
+- Define tasks with custom recurrence intervals in days (e.g. every 30, 90 or 365 days)
 - Log completions with notes and date
 - Full history per task
 - Attach warranty PDFs and manuals to each item
